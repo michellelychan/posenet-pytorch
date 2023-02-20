@@ -13,6 +13,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import posenet
 import time
+from torchvision import transforms
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
@@ -34,21 +35,28 @@ class PosenetDatasetImage(Dataset):
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
 
         if  self.train:
-            pass
+            self.transforms = transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
         else:
-            pass
+            self.transforms = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+            
 
     def __len__(self):
         return len(self.filenames)
 
     def __getitem__(self, idx):
-        filename = self .filenames[index]
+        filename = self .filenames[idx]
         input_image, draw_image, output_scale = posenet.read_imgfile(
             os.path.join(self.file_path, filename),
             scale_factor=self.scale_factor,
             output_stride=self.output_stride
         )
-
         # x = sample[:-1]
         # y = sample[-1]
         return input_image, draw_image, output_scale

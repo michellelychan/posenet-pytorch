@@ -27,14 +27,19 @@ class PosenetDatasetImage(Dataset):
         self.file_path = file_path
         self.scale_factor = scale_factor
         self.output_stride = output_stride
-        # self.filenames = os.listdir(file_path)
+        self.filenames = os.listdir(file_path)
         self.train = train
 
         # Load data from file_path
         # e.g., using pandas or numpy
         # self.data = ... 
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
-        self.filenames = self.data
+        self.filenames = [os.path.basename(file_path) for file_path in self.data]
+
+        # print("FILENAMES")
+        # for x in self.filenames:
+        #     print(x)
+        #self.filenames = self.data
         
         if  self.train:
             self.transforms = transforms.Compose([
@@ -43,7 +48,7 @@ class PosenetDatasetImage(Dataset):
                 #transforms.RandomHorizontalFlip(),
 
                 #mandatory 
-                transforms.Resize(256),
+                transforms.Resize((256, 256)),
                 transforms.ToTensor(),
                 #mean and std values based on the pretrained model
                 #mean value of the pixels of each channel [r, g, b]
@@ -52,7 +57,7 @@ class PosenetDatasetImage(Dataset):
             ])
         else:
             self.transforms = transforms.Compose([
-                transforms.Resize(256),
+                transforms.Resize((256, 256)),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -63,7 +68,8 @@ class PosenetDatasetImage(Dataset):
 
     def __getitem__(self, idx):
         filename = self.filenames[idx]
-        print("get_item: ", filename)
+        
+        # print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
             os.path.join(self.file_path, filename),
             scale_factor=self.scale_factor,
@@ -72,16 +78,51 @@ class PosenetDatasetImage(Dataset):
         # x = sample[:-1]
         # y = sample[-1]
         
+        print("get item tensor: ", torch.Tensor(input_image).cuda().size)
+        #should I do below? 
+        print("INPUT_IMAGE")
+        print(filename)
+        print(input_image.shape)
+        
+        input_image_tensor = torch.Tensor(input_image).cuda()
+        print("Tensor shape: ", input_image_tensor.shape[-2:])
+        if input_image_tensor.shape[-2:] != (513, 513):
+            input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
+            print(f"Resized image {filename}: ", input_image_resized.shape)
+            return input_image_resized, draw_image, output_scale
+        else:
+            return input_image_tensor, draw_image, output_scale
+        
+        # input_image = self.transforms(input_image)
+
+        
         #return input_image, draw_image, output_scale
-        return torch.Tensor(input_image).cuda(), filename
+        
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
     for epoch in range(num_epochs):
         # Set model to train mode
         model.train()
-
-        for batch_idx, (data, target, _) in enumerate(train_loader):
-            data, target = data.cuda(), target.cuda()
+        
+        print(train_loader)
+        
+        for batch_idx, (data, target) in enumerate(train_loader):
+            print("ENUMERATE")
+            
+            # Check if data is a tuple
+            # Check if data is a tuple
+            if isinstance(target, tuple):
+                print("Target is a tuple")
+                print(target[1])
+                print("Tuple contents: ", target)
+                for item in target:
+                    print(type(item))
+            else:
+                print("Target is not a tuple")
+                            
+            data.cuda()
+            target.cuda()
+            # data, target = data.cuda(), target.cuda()
             # Forward pass
             output = model(data)
             loss = criterion(output, target)
@@ -128,17 +169,11 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
-    x = 0
-    for tensor, filename in train_dataset:
-        x = x + 1
-        print(x)
-        print(filename)
-        print(tensor.size())
-        
+    print(next(iter(train_loader)))
         
     #image = next(iter(train_dataset))
     
-    # image_label = next(iter(train_dataset))
+    #image_label = next(iter(train_dataset))
     
     #print("image")
     #print(image.size())
@@ -146,10 +181,16 @@ def main():
     # print("image label")
     # print(image_label.size())
     
+    
+    # print(type(train_loader))
+    print('Setting up...')
+    # attrs = dir(train_loader)
+    # for attr in attrs:
+    #     print(f"{attr}: {type(getattr(train_loader, attr))}")
+
     # Training loop
     #train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
-    print('Setting up...')
-
+    
 
 if __name__ == "__main__":
     main()

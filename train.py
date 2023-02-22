@@ -1,6 +1,7 @@
 #create a train module that trains the model
 # Path: posenet-pytorch/train.py
 #inspiration: https://github.com/youngguncho/PoseNet-Pytorch/blob/master/posenet_simple.py 
+#reference: https://github.com/Lornatang/MobileNetV1-PyTorch/blob/main/train.py
 
 #install torch with pip
 # Path: posenet-pytorch/train.py
@@ -26,22 +27,32 @@ class PosenetDatasetImage(Dataset):
         self.file_path = file_path
         self.scale_factor = scale_factor
         self.output_stride = output_stride
-        self.filenames = os.listdir(file_path)
+        # self.filenames = os.listdir(file_path)
         self.train = train
 
         # Load data from file_path
         # e.g., using pandas or numpy
         # self.data = ... 
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
-
+        self.filenames = self.data
+        
         if  self.train:
             self.transforms = transforms.Compose([
-                transforms.RandomHorizontalFlip(),
+                #not mandatory - at first don't apply augmentation first before applying 
+                #transforms.RandomResizedCrop(256),
+                #transforms.RandomHorizontalFlip(),
+
+                #mandatory 
+                transforms.Resize(256),
                 transforms.ToTensor(),
+                #mean and std values based on the pretrained model
+                #mean value of the pixels of each channel [r, g, b]
+                #std value of the pixels of each channel [r, g, b]
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.transforms = transforms.Compose([
+                transforms.Resize(256),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
@@ -51,7 +62,8 @@ class PosenetDatasetImage(Dataset):
         return len(self.filenames)
 
     def __getitem__(self, idx):
-        filename = self .filenames[idx]
+        filename = self.filenames[idx]
+        print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
             os.path.join(self.file_path, filename),
             scale_factor=self.scale_factor,
@@ -59,8 +71,39 @@ class PosenetDatasetImage(Dataset):
         )
         # x = sample[:-1]
         # y = sample[-1]
-        return input_image, draw_image, output_scale
+        
+        #return input_image, draw_image, output_scale
+        return torch.Tensor(input_image).cuda(), filename
 
+def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
+    for epoch in range(num_epochs):
+        # Set model to train mode
+        model.train()
+
+        for batch_idx, (data, target, _) in enumerate(train_loader):
+            data, target = data.cuda(), target.cuda()
+            # Forward pass
+            output = model(data)
+            loss = criterion(output, target)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        # # Evaluate on test set
+        # model.eval()
+        # test_loss = 0
+        # with torch.no_grad():
+        #     for data, target, _ in test_loader:
+        #         data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
+        #         output = model(data)
+        #         test_loss += criterion(output, target).item()
+        # test_loss /= len(test_loader.dataset)
+
+        # print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
+        #     epoch+1, loss.item(), test_loss))
+        
 def main():
 
     #instatiate model 
@@ -80,13 +123,33 @@ def main():
     # Load data
     train_dataset = PosenetDatasetImage(args.image_dir, train=True)
     test_dataset = PosenetDatasetImage(args.image_dir, train=False)
+    
+    
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
+    x = 0
+    for tensor, filename in train_dataset:
+        x = x + 1
+        print(x)
+        print(filename)
+        print(tensor.size())
+        
+        
+    #image = next(iter(train_dataset))
+    
+    # image_label = next(iter(train_dataset))
+    
+    #print("image")
+    #print(image.size())
+    
+    # print("image label")
+    # print(image_label.size())
+    
     # Training loop
-    for epoch in range(num_epochs):
-        pass
+    #train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
     print('Setting up...')
+
 
 if __name__ == "__main__":
     main()

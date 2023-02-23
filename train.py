@@ -125,19 +125,27 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             target.cuda()
             
             print("Train Target type: ", type(target))
+            print("Train Target [1] shape: ", target[1].shape)
             
             # data = torch.transpose(data, 1, 3)
             # data, target = data.cuda(), target.cuda()
             # Forward pass
             output = model(data_squeezed)
-            for x in output:
-                print(x)
-            output = torch.stack(output, dim=0)
+            print("Output type: ", type(output))
             
-
+            
+            
             print("finished model")
-            print("Train Output type: ", type(output))
+            print("Train Output type: ", type(output[0]))
+            print("Train Output Length: ", len(output))
+            
+            #get keypoint coordinates from output 
+            keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
+            print("Keypoint coords: ", keypoint_coords)
+            
             # print(output)
+            
+            
             loss = criterion(output, target)
 
             # Backward pass

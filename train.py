@@ -78,14 +78,14 @@ class PosenetDatasetImage(Dataset):
         # x = sample[:-1]
         # y = sample[-1]
         
-        print("get item tensor: ", torch.Tensor(input_image).cuda().size)
+        #print("get item tensor: ", torch.Tensor(input_image).cuda().size)
         #should I do below? 
-        print("INPUT_IMAGE")
+        #print("INPUT_IMAGE")
         print(filename)
         print(input_image.shape)
         
         input_image_tensor = torch.Tensor(input_image).cuda()
-        print("Tensor shape: ", input_image_tensor.shape[-2:])
+        #print("Tensor shape: ", input_image_tensor.shape[-2:])
         if input_image_tensor.shape[-2:] != (513, 513):
             input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
             print(f"Resized image {filename}: ", input_image_resized.shape)
@@ -106,25 +106,38 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
         
         print(train_loader)
         
-        for batch_idx, (data, target) in enumerate(train_loader):
+        for batch_idx, (data, target, _) in enumerate(train_loader):
             print("ENUMERATE")
             
             # Check if data is a tuple
             # Check if data is a tuple
-            if isinstance(target, tuple):
-                print("Target is a tuple")
-                print(target[1])
-                print("Tuple contents: ", target)
-                for item in target:
-                    print(type(item))
-            else:
-                print("Target is not a tuple")
+            # if isinstance(target, tuple):
+            #     print("Target is a tuple")
+            #     print(target[1])
+            #     print("Tuple contents: ", target)
+            #     for item in target:
+            #         print(type(item))
+            # else:
+            #     print("Target is not a tuple")
                             
             data.cuda()
+            data_squeezed = data.squeeze()
             target.cuda()
+            
+            print("Train Target type: ", type(target))
+            
+            # data = torch.transpose(data, 1, 3)
             # data, target = data.cuda(), target.cuda()
             # Forward pass
-            output = model(data)
+            output = model(data_squeezed)
+            for x in output:
+                print(x)
+            output = torch.stack(output, dim=0)
+            
+
+            print("finished model")
+            print("Train Output type: ", type(output))
+            # print(output)
             loss = criterion(output, target)
 
             # Backward pass
@@ -169,12 +182,18 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
+    
+    for x in train_dataset:
+        print("SHAPE+_+ ", x[1].shape)
+        
+        
     print(next(iter(train_loader)))
+
         
     #image = next(iter(train_dataset))
     
     #image_label = next(iter(train_dataset))
-    
+
     #print("image")
     #print(image.size())
     
@@ -183,13 +202,15 @@ def main():
     
     
     # print(type(train_loader))
-    print('Setting up...')
     # attrs = dir(train_loader)
     # for attr in attrs:
     #     print(f"{attr}: {type(getattr(train_loader, attr))}")
 
     # Training loop
-    #train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
+    train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
+    print('Setting up...')
+    
+
     
 
 if __name__ == "__main__":

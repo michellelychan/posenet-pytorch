@@ -128,7 +128,6 @@ MOBILE_NET_V1_50 = [
 
 
 class MobileNetV1(nn.Module):
-
     def __init__(self, model_id, output_stride=16):
         super(MobileNetV1, self).__init__()
 

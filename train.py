@@ -22,6 +22,32 @@ parser.add_argument('--image_dir', type=str, default='./images')
 parser.add_argument('--output_dir', type=str, default='./output')
 args = parser.parse_args()
 
+class JointsMSELoss(nn.Module):
+    def __init__(self, use_target_weight=False):
+        super(JointsMSELoss, self).__init__()
+        self.criterion = nn.MSELoss(reduction='mean')
+        self.use_target_weight = use_target_weight
+
+    def forward(self, output, target): #removed target_weight
+        batch_size = output.size(0)
+        num_joints = output.size(1)
+        heatmaps_pred = output.reshape((batch_size, num_joints, -1)).split(1, 1)
+        heatmaps_gt = target.reshape((batch_size, num_joints, -1)).split(1, 1)
+        loss = 0
+
+        for idx in range(num_joints):
+            heatmap_pred = heatmaps_pred[idx].squeeze()
+            heatmap_gt = heatmaps_gt[idx].squeeze()
+            # if self.use_target_weight:
+            #     loss += 0.5 * self.criterion(
+            #         heatmap_pred.mul(target_weight[:, idx]),
+            #         heatmap_gt.mul(target_weight[:, idx])
+            #     )
+            # else:
+            loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
+
+        return loss / num_joints
+
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, scale_factor=1.0, output_stride=16, train=True):
         self.file_path = file_path
@@ -30,16 +56,10 @@ class PosenetDatasetImage(Dataset):
         self.filenames = os.listdir(file_path)
         self.train = train
 
-        # Load data from file_path
-        # e.g., using pandas or numpy
-        # self.data = ... 
+        
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
         self.filenames = [os.path.basename(file_path) for file_path in self.data]
 
-        # print("FILENAMES")
-        # for x in self.filenames:
-        #     print(x)
-        #self.filenames = self.data
         
         if  self.train:
             self.transforms = transforms.Compose([
@@ -69,6 +89,7 @@ class PosenetDatasetImage(Dataset):
     def __getitem__(self, idx):
         filename = self.filenames[idx]
         
+        # print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
             os.path.join(self.file_path, filename),
             scale_factor=self.scale_factor,
@@ -89,8 +110,6 @@ class PosenetDatasetImage(Dataset):
             return input_image_tensor, draw_image, output_scale
         
         # input_image = self.transforms(input_image)
-
-        
         #return input_image, draw_image, output_scale
         
 
@@ -103,7 +122,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
         
         for batch_idx, (data, target, _) in enumerate(train_loader):
             print("ENUMERATE")
-
+            
             data.cuda()
             data_squeezed = data.squeeze()
             target.cuda()
@@ -111,6 +130,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             print("Train Target type: ", type(target))
             print("Train Target [1] shape: ", target[1].shape)
             
+            # data = torch.transpose(data, 1, 3)
+            # data, target = data.cuda(), target.cuda()
+            # Forward pass
             output = model(data_squeezed)
             print("Output type: ", type(output))
             
@@ -119,10 +141,18 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             print("finished model")
             print("Train Output type: ", type(output[0]))
             print("Train Output Length: ", len(output))
+            
+            #heatmap tensor = output[0] 
+            #heatmap size is num of images x 17 keypoints x resolution x resolution 
+            #eg. if image size is 225 with output stride of 16, then resolution is 15 
+            
+            
             print(output[0].shape)
             print(output[1].shape)
             print(output[2].shape)
             print(output[3].shape)
+            
+                        
             
             #get keypoint coordinates from output 
             # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
@@ -164,7 +194,7 @@ def main():
     num_epochs = 10
 
     # Define loss function and optimizer
-    criterion = nn.
+    criterion = JointsMSELoss(use_target_weight=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Load data

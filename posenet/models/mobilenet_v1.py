@@ -161,4 +161,3 @@ class MobileNetV1(nn.Module):
         displacement_fwd = self.displacement_fwd(x)
         displacement_bwd = self.displacement_bwd(x)
         return heatmap, offset, displacement_fwd, displacement_bwd
-

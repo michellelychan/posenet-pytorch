@@ -69,18 +69,13 @@ class PosenetDatasetImage(Dataset):
     def __getitem__(self, idx):
         filename = self.filenames[idx]
         
-        # print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
             os.path.join(self.file_path, filename),
             scale_factor=self.scale_factor,
             output_stride=self.output_stride
         )
-        # x = sample[:-1]
-        # y = sample[-1]
         
-        #print("get item tensor: ", torch.Tensor(input_image).cuda().size)
-        #should I do below? 
-        #print("INPUT_IMAGE")
+        
         print(filename)
         print(input_image.shape)
         
@@ -108,18 +103,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
         
         for batch_idx, (data, target, _) in enumerate(train_loader):
             print("ENUMERATE")
-            
-            # Check if data is a tuple
-            # Check if data is a tuple
-            # if isinstance(target, tuple):
-            #     print("Target is a tuple")
-            #     print(target[1])
-            #     print("Tuple contents: ", target)
-            #     for item in target:
-            #         print(type(item))
-            # else:
-            #     print("Target is not a tuple")
-                            
+
             data.cuda()
             data_squeezed = data.squeeze()
             target.cuda()
@@ -127,9 +111,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             print("Train Target type: ", type(target))
             print("Train Target [1] shape: ", target[1].shape)
             
-            # data = torch.transpose(data, 1, 3)
-            # data, target = data.cuda(), target.cuda()
-            # Forward pass
             output = model(data_squeezed)
             print("Output type: ", type(output))
             
@@ -138,15 +119,19 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             print("finished model")
             print("Train Output type: ", type(output[0]))
             print("Train Output Length: ", len(output))
+            print(output[0].shape)
+            print(output[1].shape)
+            print(output[2].shape)
+            print(output[3].shape)
             
             #get keypoint coordinates from output 
-            keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
-            print("Keypoint coords: ", keypoint_coords)
+            # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
+            # print("Keypoint coords: ", keypoint_coords)
             
             # print(output)
             
             
-            loss = criterion(output, target)
+            loss = criterion(output[0], target)
 
             # Backward pass
             optimizer.zero_grad()
@@ -179,7 +164,7 @@ def main():
     num_epochs = 10
 
     # Define loss function and optimizer
-    criterion = nn.MSELoss()
+    criterion = nn.
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Load data

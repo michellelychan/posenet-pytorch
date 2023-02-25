@@ -15,8 +15,6 @@ from torch.utils.data import Dataset, DataLoader
 import posenet
 import time
 from torchvision import transforms
-import matplotlib.pyplot as plt
-from heatmap import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
@@ -25,46 +23,63 @@ parser.add_argument('--test_image_dir', type=str, default= "./images_test")
 parser.add_argument('--output_dir', type=str, default='./output')
 args = parser.parse_args()
 
-class JointsMSELoss(nn.Module):
-    def __init__(self, use_target_weight=False):
-        super(JointsMSELoss, self).__init__()
-        self.criterion = nn.MSELoss(reduction='mean')
-        self.use_target_weight = use_target_weight
+class MixedLoss(nn.Module):
+    '''
+    ref: https://github.com/mks0601/PoseFix_RELEASE/blob/master/main/model.py
+    input: {
+        'heatmap': (N, C, X, Y, Z), unnormalized
+        'coord': (N, C, 3)
+    }
+    target: {
+        'heatmap': (N, C, X, Y, Z), normalized
+        'coord': (N, C, 3)
+    }
+    '''
+    def __init__(self, heatmap_weight=0.5):
+    # def __init__(self, heatmap_weight=0.05):
+        super(MixedLoss, self).__init__()
+        self.w1 = heatmap_weight
+        self.w2 = 1 - self.w1
+        self.cross_entropy_loss = SoftmaxCrossEntropyWithLogits()
 
-    def forward(self, output, target): #removed target_weight
-        batch_size = output.size(0)
-        num_joints = output.size(1)
-        heatmap_size = output.size(2)
-        print("output  size: ", output.size())
-        print("target size: ", target.size())
-        
-        # print the values of the tensors before any operation
-        print("output before reshape: ", output.shape)
-        print("target before reshape: ", target.shape)
-        
-        # heatmaps_pred = output.reshape((batch_size, num_joints, -1)).split(1, 1)
-        # heatmaps_gt = target.reshape((batch_size, num_joints, -1)).split(1, 1)
-        
-        loss = 0
+    def forward(self, input, target):
+        pred_heatmap = input[0]
+        pred_coord = input[1]
+        gt_heatmap = target[0]
+        gt_coord = target[1]
+        # pred_heatmap, pred_coord = input['heatmap'], input['coord']
+        # gt_heatmap, gt_coord = target['heatmap'], target['coord']
 
-        for idx in range(num_joints):
-            heatmap_pred = output[:, idx, :, :]
-            heatmap_gt = output[:, idx, :, :]
-            
-            # if self.use_target_weight:
-            #     loss += 0.5 * self.criterion(
-            #         heatmap_pred.mul(target_weight[:, idx]),
-            #         heatmap_gt.mul(target_weight[:, idx])
-            #     )
-            # else:
-            print("LOSS: ", loss)
-            loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
-            
-            
-        print("LOSS: ", loss.item())
-        print(type(loss))
+        # Heatmap loss
+        N, C = pred_heatmap.shape[0:2]
+        pred_heatmap = pred_heatmap.view(N*C, -1)
+        gt_heatmap = gt_heatmap.view(N*C, -1)
 
-        return loss / num_joints
+        # Note, averaged over N*C
+        hm_loss = self.cross_entropy_loss(pred_heatmap, gt_heatmap)
+
+        # Coord L1 loss
+        l1_loss = torch.mean(torch.abs(pred_coord - gt_coord))
+
+        return self.w1 * hm_loss + self.w2 * l1_loss
+
+class SoftmaxCrossEntropyWithLogits(nn.Module):
+    '''
+    Similar to tensorflow's tf.nn.softmax_cross_entropy_with_logits
+    ref: https://gist.github.com/tejaskhot/cf3d087ce4708c422e68b3b747494b9f
+    The 'input' is unnormalized scores.
+    The 'target' is a probability distribution.
+    Shape:
+        Input: (N, C), batch size N, with C classes
+        Target: (N, C), batch size N, with C classes
+    '''
+    def __init__(self):
+        super(SoftmaxCrossEntropyWithLogits, self).__init__()
+
+    def forward(self, input, target):
+        loss = torch.sum(-target * F.log_softmax(input, -1), -1)
+        mean_loss = torch.mean(loss)
+        return mean_loss
 
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, scale_factor=1.0, output_stride=16, train=True):
@@ -131,8 +146,6 @@ class PosenetDatasetImage(Dataset):
         #return input_image, draw_image, output_scale
         
 
-
-
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
     for epoch in range(num_epochs):
         # Set model to train mode
@@ -157,6 +170,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             output = model(data_squeezed)
             # print("Output type: ", type(output))
             
+            
+            
             # print("finished model")
             # print("Train Output type: ", type(output[0]))
             # print("Train Output Length: ", len(output))
@@ -168,7 +183,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             # print(output[1].shape)
             # print(output[2].shape)
             # print(output[3].shape)
-                
+            
+                        
             
             #get keypoint coordinates from output 
             # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
@@ -211,9 +227,9 @@ def main():
     batch_size = 32
     learning_rate = 0.001
     num_epochs = 10
-        
+
     # Define loss function and optimizer
-    criterion = JointsMSELoss(use_target_weight=False)
+    criterion = MixedLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Load data
@@ -224,10 +240,36 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
+    
+    # for x in train_dataset:
+        # print("SHAPE+_+ ", x[1].shape)
+        
+        
+    # print(next(iter(train_loader)))
+
+        
+    #image = next(iter(train_dataset))
+    
+    #image_label = next(iter(train_dataset))
+
+    #print("image")
+    #print(image.size())
+    
+    # print("image label")
+    # print(image_label.size())
+    
+    
+    # print(type(train_loader))
+    # attrs = dir(train_loader)
+    # for attr in attrs:
+    #     print(f"{attr}: {type(getattr(train_loader, attr))}")
+
     # Training loop
     train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
     print('Setting up...')
+    
 
+    
 
 if __name__ == "__main__":
     main()

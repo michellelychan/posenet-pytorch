@@ -3,58 +3,66 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import os
+from scipy.stats import multivariate_normal
 
-def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):      
-        
-    #create empty heatmap 
-    heatmap_size = (33, 33)
-    heatmap = np.zeros(heatmap_size)
-    
-    # Compute a Gaussian kernel centered at the keypoint
-    kernel_std = kernel_size / 10
-    kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
-    kernel = np.outer(kernel, kernel.transpose())
-    
-    # Add the kernel to the heatmap at the keypoint's coordinates
-    xmin = max(0, int(keypoint_x - kernel_size/2))
-    xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
-    ymin = max(0, int(keypoint_y - kernel_size/2))
-    ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
-    heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
-
-    # Normalize the heatmap values
-    heatmap /= np.max(heatmap)
-    
-    return heatmap
 
 def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):    
         
     #create empty heatmap 
     # heatmap_size = (33, 33)
     heatmap = np.zeros(heatmap_size)
+    print("heatmap size: ", heatmap.size)
     
     # Compute a Gaussian kernel centered at the keypoint
     kernel_std = kernel_size / 10
     kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
     kernel = np.outer(kernel, kernel.transpose())
     
+    # kernel = multivariate_normal(mean=[0, 0], cov=np.eye(2)*(kernel_std)**2)
+
+    
     # Add the kernel to the heatmap at the keypoint's coordinates
-    xmin = max(0, int(keypoint_x - kernel_size/2))
-    xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
-    ymin = max(0, int(keypoint_y - kernel_size/2))
-    ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
-    heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
+    # xmin = max(0, int(keypoint_x - kernel_size/2))
+    # xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
+    # ymin = max(0, int(keypoint_y - kernel_size/2))
+    # ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
+    
+    xmin = max(int(keypoint_x - kernel_size//2), 0)
+    xmax = min(int(keypoint_x + kernel_size//2 + 1), heatmap_size[1])
+    ymin = max(int(keypoint_y - kernel_size//2), 0)
+    ymax = min(int(keypoint_y + kernel_size//2 + 1), heatmap_size[0])
+    
+    #how much it is deviating from keypoint_x 
+    #if at keypoint_x, then kernel will be at kernel_size//2
+    
+    kernel_xmin = max(0, kernel_size//2 - int(keypoint_x) - xmin) 
+    kernel_xmax = min(kernel_size, kernel_size//2 + xmax - int(keypoint_x))
+    kernel_ymin = max(0, kernel_size//2 - int(keypoint_y) + ymin)
+    kernel_ymax = min(kernel_size, kernel_size//2 + ymax - int(keypoint_y))
+                      
+#     kernel_xmin = max(int(kernel_size//2 - keypoint_x), 0)
+#     kernel_xmax = min(int(kernel_size//2 + heatmap_size[1] - keypoint_x), kernel_size)
+#     kernel_ymin = max(int(kernel_size//2 - keypoint_y), 0)
+#     kernel_ymax = min(int(kernel_size//2 + heatmap_size[0] - keypoint_y), kernel_size)
+    
+    
+    print("xmin: ", xmin)
+    print("xmax: ", xmax)
+    print("ymin: ", ymin)
+    print("ymax: ", ymax)
+    
+    print("kernel_xmin: ", kernel_xmin)
+    print("kernel_xmax: ", kernel_xmax)
+    print("kernel_ymin: ", kernel_ymin)
+    print("kernel_ymax: ", kernel_ymax)
+    
+    # heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
+
+    heatmap[ymin:ymax, xmin:xmax] += kernel[kernel_ymin:kernel_ymax, kernel_xmin:kernel_xmax]
 
     # Normalize the heatmap values
     heatmap /= np.max(heatmap)
     return heatmap
-
-def convert_ground_truth_kp_to_heatmap(gt_image_keypoints, num_keypoints=17):
-    heatmap = np.zeros((33, 33))
-    for i in range(0, num_keypoints):
-        heatmap += points_to_heatmap(gt_image_keypoints[i][0], gt_image_keypoints[i][1])
-    return heatmap
-
 
 def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33]):
     # create the output directory if it does not exist
@@ -97,30 +105,37 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
             heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
             
             for i, keypoint_coord in enumerate(keypoints):
-                heatmap = points_to_heatmap(keypoint_coord[i][0], keypoint_coord[i][1], kernel_size=11, heatmap_size=(33,33))
-                heatmaps.append(heatmap)
+                print("i: ", i)
+                print("Keypoint_coord x: ", keypoint_coord[0])
+                print("Keypoint_coord y: ", keypoint_coord[1])
+                heatmap = points_to_heatmap(keypoint_coord[0], keypoint_coord[1], kernel_size=11, heatmap_size=(33,33))
+                
+                heatmaps[i] = heatmap
         
 
         # create a folder for the heatmaps of this image
         output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.join(output_dir, 'npy'), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, 'png'), exist_ok=True)
+        
 
         # save the heatmaps to separate files in the output folder
         for i in range(num_keypoints):
-            output_file = os.path.join(output_dir, f"heatmap_{i}.npy")
-            output_image = os.path.join(output_dir, f"heatmap_{i}.png")
+            output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
+            output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
             np.save(output_file, heatmaps[i])
             plt.imshow(heatmap, cmap='hot', interpolation='nearest')
             plt.colorbar()
             plt.savefig(output_image)
+            plt.clf()
+            
     
     
 
 def main():
-    heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
-    prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33])
-        
-    
+    # heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
+    prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps_train", heatmap_shape=[33,33])
     
     
 

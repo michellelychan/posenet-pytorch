@@ -2,6 +2,7 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import os
 
 def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):      
         
@@ -26,10 +27,10 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):
     
     return heatmap
 
-def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):    
+def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):    
         
     #create empty heatmap 
-    heatmap_size = (33, 33)
+    # heatmap_size = (33, 33)
     heatmap = np.zeros(heatmap_size)
     
     # Compute a Gaussian kernel centered at the keypoint
@@ -55,7 +56,7 @@ def convert_ground_truth_kp_to_heatmap(gt_image_keypoints, num_keypoints=17):
     return heatmap
 
 
-def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps"):
+def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33]):
     # create the output directory if it does not exist
     if not os.path.exists(heatmaps_dir):
         os.mkdir(heatmaps_dir)
@@ -65,35 +66,62 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
     
     keypoint_files = []
     
-    for f in image_files:
-        image_path = os.path.join(image_dir, f)
-        keypoint_path = os.path.join(keypoints_dir, os.path.splitext(f)[0] + ".txt")
-        if os.path.exists(keypoint_path):
-            keypoint_files.append(keypoint_path)
-        else:
+     # iterate over the image files
+    for image_file in image_files:
+                
+        # construct the paths to the image and keypoint files
+        image_path = os.path.join(images_dir, image_file)
+        keypoint_path = os.path.join(keypoints_dir, os.path.splitext(image_file)[0] + ".txt")
+
+        # check if the keypoint file exists
+        if not os.path.exists(keypoint_path):
             print("Keypoint file does not exist for image:", image_path)
-            
-    # iterate over the image files
-    heatmaps = []
-    for i in range(len(image_files)):
-        # load the keypoint file
-        with open(keypoint_files[i], "r") as f:
-            keypoint_data = np.loadtxt(f, delimiter=",")
+            continue
         
-        # convert the keypoints to heatmap
-        heatmap = convert_ground_truth_kp_to_heatmap(keypoint_data[:num_keypoints])
-        heatmaps.append(heatmap)
-    # save the heatmaps to file
-    np.save('heatmaps.npy', heatmaps)
+        # load the keypoint file
+        with open(keypoint_path, "r") as f:
+            keypoints = np.zeros((num_keypoints,2))
+            
+            for line in f:
+                parts = line.strip().split()
+                keypoint_id = int(parts[0])
+                center_x = float(parts[1]) * heatmap_shape[1]
+                center_y = float(parts[2]) * heatmap_shape[0]
+                # width = float(parts[3]) * heatmap_shape[1]
+                # height = float(parts[4]) * heatmap_shape[0]
+                
+                #Ignore the last keypoint which is the bounding box of the person
+                if keypoint_id != num_keypoints: 
+                    keypoints[keypoint_id] = np.array([center_x, center_y])
+                
+            heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
+            
+            for i, keypoint_coord in enumerate(keypoints):
+                heatmap = points_to_heatmap(keypoint_coord[i][0], keypoint_coord[i][1], kernel_size=11, heatmap_size=(33,33))
+                heatmaps.append(heatmap)
+        
+
+        # create a folder for the heatmaps of this image
+        output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
+        os.makedirs(output_dir, exist_ok=True)
+
+        # save the heatmaps to separate files in the output folder
+        for i in range(num_keypoints):
+            output_file = os.path.join(output_dir, f"heatmap_{i}.npy")
+            output_image = os.path.join(output_dir, f"heatmap_{i}.png")
+            np.save(output_file, heatmaps[i])
+            plt.imshow(heatmap, cmap='hot', interpolation='nearest')
+            plt.colorbar()
+            plt.savefig(output_image)
+    
     
 
 def main():
     heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
-    prepare_ground_truth_data()
+    prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33])
+        
     
-    plt.imshow(heatmap, cmap='hot', interpolation='nearest')
-    plt.colorbar()
-    plt.savefig('heatmap.png')
+    
     
 
 if __name__ == "__main__":

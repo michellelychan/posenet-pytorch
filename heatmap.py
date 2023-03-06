@@ -74,13 +74,25 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
     
     keypoint_files = []
     
+    #remapping roboflow keypoint coordinates index to posenet keypoint coordinates index
+    original_names = ['0-nose', '1-leftEye', '10-rightWrist', '11-leftHip', '12-rightHip', '13-leftKnee', '14-rightKnee', '15-leftAnkle', '16-rightAnkle', '17-person', '2-rightEye', '3-leftEar', '4-rightEar', '5-leftShoulder', '6-rightShoulder', '7-leftElbow', '8-rightElbow', '9-leftWrist']
+    new_order_names = ['0-nose', '1-leftEye', '2-rightEye', '3-leftEar', '4-rightEar', '5-leftShoulder', '6-rightShoulder', '7-leftElbow', '8-rightElbow', '9-leftWrist', '10-rightWrist', '11-leftHip', '12-rightHip', '13-leftKnee', '14-rightKnee', '15-leftAnkle', '16-rightAnkle', '17-person']
+        
+    #prepare index map to reindex the keypoints
+    index_map = remap_keypoint_coordinates_index(original_names, new_order_names)
+        
+    
      # iterate over the image files
     for image_file in image_files:
                 
         # construct the paths to the image and keypoint files
         image_path = os.path.join(images_dir, image_file)
         keypoint_path = os.path.join(keypoints_dir, os.path.splitext(image_file)[0] + ".txt")
-
+        
+        
+        
+        print("=== IMAGE FILE ===")
+        print(image_file)
         # check if the keypoint file exists
         if not os.path.exists(keypoint_path):
             print("Keypoint file does not exist for image:", image_path)
@@ -93,13 +105,20 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
             for line in f:
                 parts = line.strip().split()
                 keypoint_id = int(parts[0])
+                print("normalized x: ", parts[1])
+                print("normalized y: ", parts[2])
+                
                 center_x = float(parts[1]) * heatmap_shape[1]
                 center_y = float(parts[2]) * heatmap_shape[0]
+                
+                print("center_x: ", center_x)
+                print("center_y: ", center_y)
                 # width = float(parts[3]) * heatmap_shape[1]
                 # height = float(parts[4]) * heatmap_shape[0]
                 
                 #Ignore the last keypoint which is the bounding box of the person
-                if keypoint_id != num_keypoints: 
+                if keypoint_id != num_keypoints:
+                    new_keypoint_id = index_map[keypoint_id]
                     keypoints[keypoint_id] = np.array([center_x, center_y])
                 
             heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
@@ -125,18 +144,26 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
             output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
             output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
             np.save(output_file, heatmaps[i])
-            plt.imshow(heatmap, cmap='hot', interpolation='nearest')
+            plt.imshow(heatmaps[i], cmap='hot', interpolation='nearest')
             plt.colorbar()
             plt.savefig(output_image)
             plt.clf()
             
+def remap_keypoint_coordinates_index(original_names, new_order_names):
+    
+    # create a dictionary that maps original indices to new indices
+    index_map = {}
+    for i, name in enumerate(original_names):
+        index_map[i] = new_order_names.index(name)
+    return index_map
+
     
     
 
+    
 def main():
     # heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
     prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps_train", heatmap_shape=[33,33])
-    
     
 
 if __name__ == "__main__":

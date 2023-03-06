@@ -117,9 +117,9 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
                 # height = float(parts[4]) * heatmap_shape[0]
                 
                 #Ignore the last keypoint which is the bounding box of the person
-                if keypoint_id != num_keypoints:
-                    new_keypoint_id = index_map[keypoint_id]
-                    keypoints[keypoint_id] = np.array([center_x, center_y])
+                new_keypoint_id = index_map[keypoint_id]
+                if new_keypoint_id != num_keypoints:
+                    keypoints[new_keypoint_id] = np.array([center_x, center_y])
                 
             heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
             

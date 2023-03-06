@@ -1,262 +1,100 @@
-#create a train module that trains the model
-# Path: posenet-pytorch/train.py
-#inspiration: https://github.com/youngguncho/PoseNet-Pytorch/blob/master/posenet_simple.py 
-#reference: https://github.com/Lornatang/MobileNetV1-PyTorch/blob/main/train.py
-
-#install torch with pip
-# Path: posenet-pytorch/train.py
-
-#resolution (image size: 225; stride: 16) 
-#// 15 = ((225 - 1) / 16) + 1
-#output[0]: heatmap 
-#output[1]: offset vectors
-#output[2]: displacement forward
-#output[3]: displacement backward
-
+#create ground truth data by converting points to heatmap
+import numpy as np
 import cv2
-import argparse
-import os
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import posenet
-import time
-from torchvision import transforms
 import matplotlib.pyplot as plt
-from heatmap import *
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=int, default=101)
-parser.add_argument('--train_image_dir', type=str, default='./images_train')
-parser.add_argument('--test_image_dir', type=str, default= "./images_test")
-parser.add_argument('--output_dir', type=str, default='./output')
-args = parser.parse_args()
-
-class JointsMSELoss(nn.Module):
-    def __init__(self, use_target_weight=False):
-        super(JointsMSELoss, self).__init__()
-        self.criterion = nn.MSELoss(reduction='mean')
-        self.use_target_weight = use_target_weight
-
-    def forward(self, output, target): #removed target_weight
-        batch_size = output.size(0)
-        num_joints = output.size(1)
-        heatmap_size = output.size(2)
+def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):      
         
-        print("output  size: ", output.size())
-        print("target size: ", target.size())
-        
-        # print the values of the tensors before any operation
-        print("output before reshape: ", output.shape)
-        print("target before reshape: ", target.shape)
-        
-        # heatmaps_pred = output.reshape((batch_size, num_joints, -1)).split(1, 1)
-        # heatmaps_gt = target.reshape((batch_size, num_joints, -1)).split(1, 1)
-        
-        loss = 0
-
-        for idx in range(num_joints):
-            heatmap_pred = output[:, idx, :, :]
-            heatmap_gt = output[:, idx, :, :]
-            
-            # if self.use_target_weight:
-            #     loss += 0.5 * self.criterion(
-            #         heatmap_pred.mul(target_weight[:, idx]),
-            #         heatmap_gt.mul(target_weight[:, idx])
-            #     )
-            # else:
-            print("LOSS: ", loss)
-            loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
-            
-            
-        print("LOSS: ", loss.item())
-        print(type(loss))
-        
-        return loss / num_joints
-
-class PosenetDatasetImage(Dataset):
-    def __init__(self, file_path, scale_factor=1.0, output_stride=16, train=True):
-        self.file_path = file_path
-        self.scale_factor = scale_factor
-        self.output_stride = output_stride
-        self.filenames = os.listdir(file_path)
-        self.train = train
-        
-        self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
-        self.filenames = [os.path.basename(file_path) for file_path in self.data]
-
-        if  self.train:
-            self.transforms = transforms.Compose([
-                #not mandatory - at first don't apply augmentation first before applying 
-                #transforms.RandomResizedCrop(256),
-                #transforms.RandomHorizontalFlip(),
-
-                #mandatory 
-                transforms.Resize((256, 256)),
-                transforms.ToTensor(),
-                #mean and std values based on the pretrained model
-                #mean value of the pixels of each channel [r, g, b]
-                #std value of the pixels of each channel [r, g, b]
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            self.transforms = transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-            
-        
-            
-
-    def __len__(self):
-        return len(self.filenames)
-
-    def __getitem__(self, idx):
-        filename = self.filenames[idx]
-        
-        # print("get_item: ", filename)
-        input_image, draw_image, output_scale = posenet.read_imgfile(
-            os.path.join(self.file_path, filename),
-            scale_factor=self.scale_factor,
-            output_stride=self.output_stride
-        )
-        
-        
-        # print(filename)
-        # print(input_image.shape)
-        
-        input_image_tensor = torch.Tensor(input_image).cuda()
-        
-        #print("Tensor shape: ", input_image_tensor.shape[-2:])
-        if input_image_tensor.shape[-2:] != (513, 513):
-            input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
-            # print(f"Resized image {filename}: ", input_image_resized.shape)
-            return input_image_resized, draw_image, output_scale
-        else:
-            return input_image_tensor, draw_image, output_scale
-        
-        # input_image = self.transforms(input_image)
-        #return input_image, draw_image, output_scale
-        
-
-
-def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
-    for epoch in range(num_epochs):
-        # Set model to train mode
-        model.train()
-        
-        print(train_loader)
-        
-        for batch_idx, (data, target, _) in enumerate(train_loader):
-            # print("ENUMERATE")
-            
-            data.cuda()
-            data_squeezed = data.squeeze()
-            target.cuda()
-            
-            output = model(data_squeezed)
-            #heatmap tensor = output[0] 
-            #heatmap size is num of images x 17 keypoints x resolution x resolution 
-            #eg. if image size is 225 with output stride of 16, then resolution is 15 
-            
-            print("OUTPUT SHAPES")
-            print(output[0].shape)
-            print(output[1].shape)
-            print(output[2].shape)
-            print(output[2])
-            print(output[3].shape)
-            
-            
-            #get keypoint coordinates from output 
-            # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
-            # print("Keypoint coords: ", keypoint_coords)
-            
-            # print(output)
-            
-            
-            loss = criterion(output[0], target)
-
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        # Evaluate on test set
-        model.eval()
-        test_loss = 0
-        with torch.no_grad():
-            for data, target, _ in test_loader:
-                data.cuda()
-                data_squeezed = data.squeeze()
-                target.cuda()
-                # data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
-                output = model(data_squeezed)
-                test_loss += criterion(output[0], target).item()
-        test_loss /= len(test_loader.dataset)
-
-        print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
-            epoch+1, loss.item(), test_loss))
-        
-    heatmap = output[0]
+    #create empty heatmap 
+    heatmap_size = (33, 33)
+    heatmap = np.zeros(heatmap_size)
     
-    #print heatmap for each image
-    os.makedirs('heatmaps', exist_ok=True)
+    # Compute a Gaussian kernel centered at the keypoint
+    kernel_std = kernel_size / 10
+    kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
+    kernel = np.outer(kernel, kernel.transpose())
     
-    #loop through the 15 images 
-    for i in range(heatmap.shape[0]):
-        # Create a new directory for this image
-        os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
+    # Add the kernel to the heatmap at the keypoint's coordinates
+    xmin = max(0, int(keypoint_x - kernel_size/2))
+    xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
+    ymin = max(0, int(keypoint_y - kernel_size/2))
+    ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
+    heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
+
+    # Normalize the heatmap values
+    heatmap /= np.max(heatmap)
+    
+    return heatmap
+
+def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11):    
         
-        
-        
-        #loop through each joint 
-        for j in range(heatmap.shape[1]):
-            joint_heatmap = heatmap[i, j, :, :].squeeze()
+    #create empty heatmap 
+    heatmap_size = (33, 33)
+    heatmap = np.zeros(heatmap_size)
+    
+    # Compute a Gaussian kernel centered at the keypoint
+    kernel_std = kernel_size / 10
+    kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
+    kernel = np.outer(kernel, kernel.transpose())
+    
+    # Add the kernel to the heatmap at the keypoint's coordinates
+    xmin = max(0, int(keypoint_x - kernel_size/2))
+    xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
+    ymin = max(0, int(keypoint_y - kernel_size/2))
+    ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
+    heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
+
+    # Normalize the heatmap values
+    heatmap /= np.max(heatmap)
+    return heatmap
+
+def convert_ground_truth_kp_to_heatmap(gt_image_keypoints, num_keypoints=17):
+    heatmap = np.zeros((33, 33))
+    for i in range(0, num_keypoints):
+        heatmap += points_to_heatmap(gt_image_keypoints[i][0], gt_image_keypoints[i][1])
+    return heatmap
+
+
+def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps"):
+    # create the output directory if it does not exist
+    if not os.path.exists(heatmaps_dir):
+        os.mkdir(heatmaps_dir)
+    
+    # get the list of image files in the directory
+    image_files = sorted(os.listdir(images_dir))
+    
+    keypoint_files = []
+    
+    for f in image_files:
+        image_path = os.path.join(image_dir, f)
+        keypoint_path = os.path.join(keypoints_dir, os.path.splitext(f)[0] + ".txt")
+        if os.path.exists(keypoint_path):
+            keypoint_files.append(keypoint_path)
+        else:
+            print("Keypoint file does not exist for image:", image_path)
             
-            # Plot the heatmap
-            plt.gca().set_aspect('equal', adjustable='box')
-            plt.imshow(joint_heatmap.detach().cpu().numpy(), cmap='hot', interpolation='nearest')
-            plt.colorbar()
-            
-            # Save the heatmap in the corresponding image folder
-            plt.savefig(f'./heatmaps/image_{i}/joint_{j}_heatmap.png')
-            
-            # Clear the plot
-            plt.clf()
+    # iterate over the image files
+    heatmaps = []
+    for i in range(len(image_files)):
+        # load the keypoint file
+        with open(keypoint_files[i], "r") as f:
+            keypoint_data = np.loadtxt(f, delimiter=",")
         
+        # convert the keypoints to heatmap
+        heatmap = convert_ground_truth_kp_to_heatmap(keypoint_data[:num_keypoints])
+        heatmaps.append(heatmap)
+    # save the heatmaps to file
+    np.save('heatmaps.npy', heatmaps)
+    
+
 def main():
-
-    #instatiate model 
-    model = posenet.load_model(args.model)
-    model = model.cuda()
-    output_stride = model.output_stride
-
-    # Set up training parameters
-    batch_size = 32
-    learning_rate = 0.001
-    num_epochs = 10
+    heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
+    prepare_ground_truth_data()
     
-    plt = points_to_heatmap(4.5, 4.7, 21)
+    plt.imshow(heatmap, cmap='hot', interpolation='nearest')
+    plt.colorbar()
+    plt.savefig('heatmap.png')
     
-    
-    # Define loss function and optimizer
-    criterion = JointsMSELoss(use_target_weight=False)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    # Load data
-    train_dataset = PosenetDatasetImage(args.train_image_dir, train=True)
-    test_dataset = PosenetDatasetImage(args.test_image_dir, train=False)
-    
-    
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    # Training loop
-    train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
-    print('Setting up...')
-    
-
 
 if __name__ == "__main__":
     main()

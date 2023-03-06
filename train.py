@@ -6,6 +6,13 @@
 #install torch with pip
 # Path: posenet-pytorch/train.py
 
+#resolution (image size: 225; stride: 16) 
+#// 15 = ((225 - 1) / 16) + 1
+#output[0]: heatmap 
+#output[1]: offset vectors
+#output[2]: displacement forward
+#output[3]: displacement backward
+
 import cv2
 import argparse
 import os
@@ -35,6 +42,7 @@ class JointsMSELoss(nn.Module):
         batch_size = output.size(0)
         num_joints = output.size(1)
         heatmap_size = output.size(2)
+        
         print("output  size: ", output.size())
         print("target size: ", target.size())
         
@@ -60,10 +68,9 @@ class JointsMSELoss(nn.Module):
             print("LOSS: ", loss)
             loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
             
-            
         print("LOSS: ", loss.item())
         print(type(loss))
-
+        
         return loss / num_joints
 
 class PosenetDatasetImage(Dataset):
@@ -73,12 +80,10 @@ class PosenetDatasetImage(Dataset):
         self.output_stride = output_stride
         self.filenames = os.listdir(file_path)
         self.train = train
-
         
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
         self.filenames = [os.path.basename(file_path) for file_path in self.data]
 
-        
         if  self.train:
             self.transforms = transforms.Compose([
                 #not mandatory - at first don't apply augmentation first before applying 
@@ -100,6 +105,8 @@ class PosenetDatasetImage(Dataset):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
             
+        
+            
 
     def __len__(self):
         return len(self.filenames)
@@ -119,6 +126,7 @@ class PosenetDatasetImage(Dataset):
         # print(input_image.shape)
         
         input_image_tensor = torch.Tensor(input_image).cuda()
+        
         #print("Tensor shape: ", input_image_tensor.shape[-2:])
         if input_image_tensor.shape[-2:] != (513, 513):
             input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
@@ -132,7 +140,6 @@ class PosenetDatasetImage(Dataset):
         
 
 
-
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
     for epoch in range(num_epochs):
         # Set model to train mode
@@ -140,7 +147,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
         
         print(train_loader)
         
-        torch.autograd.set_detect_anomaly(True)
         for batch_idx, (data, target, _) in enumerate(train_loader):
             # print("ENUMERATE")
             
@@ -148,27 +154,18 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             data_squeezed = data.squeeze()
             target.cuda()
             
-            # print("Train Target type: ", type(target))
-            # print("Train Target [1] shape: ", target[1].shape)
-            
-            # data = torch.transpose(data, 1, 3)
-            # data, target = data.cuda(), target.cuda()
-            # Forward pass
             output = model(data_squeezed)
-            # print("Output type: ", type(output))
-            
-            # print("finished model")
-            # print("Train Output type: ", type(output[0]))
-            # print("Train Output Length: ", len(output))
-            
             #heatmap tensor = output[0] 
             #heatmap size is num of images x 17 keypoints x resolution x resolution 
             #eg. if image size is 225 with output stride of 16, then resolution is 15 
-            # print(output[0].shape)
-            # print(output[1].shape)
-            # print(output[2].shape)
-            # print(output[3].shape)
-                
+            
+            print("OUTPUT SHAPES")
+            print(output[0].shape)
+            print(output[1].shape)
+            print(output[2].shape)
+            print(output[2])
+            print(output[3].shape)
+            
             
             #get keypoint coordinates from output 
             # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
@@ -200,6 +197,36 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
         print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
             epoch+1, loss.item(), test_loss))
         
+    heatmap = output[0]
+    print_heatmap(heatmap)
+
+def print_heatmap(heatmap):
+    #print heatmap for each image
+    os.makedirs('heatmaps', exist_ok=True)
+    
+    #loop through the 15 images 
+    for i in range(heatmap.shape[0]):
+        # Create a new directory for this image
+        os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
+        
+        
+        
+        #loop through each joint 
+        for j in range(heatmap.shape[1]):
+            joint_heatmap = heatmap[i, j, :, :].squeeze()
+            
+            # Plot the heatmap
+            plt.gca().set_aspect('equal', adjustable='box')
+            plt.imshow(joint_heatmap.detach().cpu().numpy(), cmap='hot', interpolation='nearest')
+            plt.colorbar()
+            
+            # Save the heatmap in the corresponding image folder
+            plt.savefig(f'./heatmaps/image_{i}/joint_{j}_heatmap.png')
+            
+            # Clear the plot
+            plt.clf()
+
+
 def main():
 
     #instatiate model 
@@ -211,7 +238,10 @@ def main():
     batch_size = 32
     learning_rate = 0.001
     num_epochs = 10
-        
+    
+    plt = points_to_heatmap(4.5, 4.7, 21)
+    
+    
     # Define loss function and optimizer
     criterion = JointsMSELoss(use_target_weight=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -223,10 +253,11 @@ def main():
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    
+
     # Training loop
     train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
     print('Setting up...')
+    
 
 
 if __name__ == "__main__":

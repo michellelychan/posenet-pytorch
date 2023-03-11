@@ -8,10 +8,10 @@
 
 #resolution (image size: 225; stride: 16) 
 #// 15 = ((225 - 1) / 16) + 1
-#output[0]: heatmap 
-#output[1]: offset vectors
-#output[2]: displacement forward
-#output[3]: displacement backward
+#output[0]: heatmap  [15, 17, 33, 33] 
+#output[1]: offset vectors [15, 34, 33, 33] 
+#output[2]: displacement forward [15, 32, 33, 33] 
+#output[3]: displacement backward [15, 32, 33, 33]
 
 import cv2
 import argparse
@@ -153,7 +153,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             data.cuda()
             data_squeezed = data.squeeze()
             target.cuda()
-            
             output = model(data_squeezed)
             #heatmap tensor = output[0] 
             #heatmap size is num of images x 17 keypoints x resolution x resolution 
@@ -225,7 +224,6 @@ def print_heatmap(heatmap):
             
             # Clear the plot
             plt.clf()
-
 
 def main():
 

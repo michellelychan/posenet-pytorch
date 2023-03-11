@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import os
 from scipy.stats import multivariate_normal
 
-
 def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):    
         
     #create empty heatmap 
@@ -35,7 +34,7 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
     #how much it is deviating from keypoint_x 
     #if at keypoint_x, then kernel will be at kernel_size//2
     
-    kernel_xmin = max(0, kernel_size//2 - int(keypoint_x) - xmin) 
+    kernel_xmin = max(0, kernel_size//2 - int(keypoint_x) - xmin)
     kernel_xmax = min(kernel_size, kernel_size//2 + xmax - int(keypoint_x))
     kernel_ymin = max(0, kernel_size//2 - int(keypoint_y) + ymin)
     kernel_ymax = min(kernel_size, kernel_size//2 + ymax - int(keypoint_y))

@@ -4,11 +4,11 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 from scipy.stats import multivariate_normal
+import torch
 
 def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):    
         
     #create empty heatmap 
-    # heatmap_size = (33, 33)
     heatmap = np.zeros(heatmap_size)
     print("heatmap size: ", heatmap.size)
     
@@ -16,15 +16,6 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
     kernel_std = kernel_size / 10
     kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
     kernel = np.outer(kernel, kernel.transpose())
-    
-    # kernel = multivariate_normal(mean=[0, 0], cov=np.eye(2)*(kernel_std)**2)
-
-    
-    # Add the kernel to the heatmap at the keypoint's coordinates
-    # xmin = max(0, int(keypoint_x - kernel_size/2))
-    # xmax = min(heatmap_size[1], int(keypoint_x + kernel_size/2))
-    # ymin = max(0, int(keypoint_y - kernel_size/2))
-    # ymax = min(heatmap_size[0], int(keypoint_y + kernel_size/2))
     
     xmin = max(int(keypoint_x - kernel_size//2), 0)
     xmax = min(int(keypoint_x + kernel_size//2 + 1), heatmap_size[1])
@@ -39,29 +30,23 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
     kernel_ymin = max(0, kernel_size//2 - int(keypoint_y) + ymin)
     kernel_ymax = min(kernel_size, kernel_size//2 + ymax - int(keypoint_y))
                       
-#     kernel_xmin = max(int(kernel_size//2 - keypoint_x), 0)
-#     kernel_xmax = min(int(kernel_size//2 + heatmap_size[1] - keypoint_x), kernel_size)
-#     kernel_ymin = max(int(kernel_size//2 - keypoint_y), 0)
-#     kernel_ymax = min(int(kernel_size//2 + heatmap_size[0] - keypoint_y), kernel_size)
     
+    #     print("xmin: ", xmin)
+    #     print("xmax: ", xmax)
+    #     print("ymin: ", ymin)
+    #     print("ymax: ", ymax)
     
-    print("xmin: ", xmin)
-    print("xmax: ", xmax)
-    print("ymin: ", ymin)
-    print("ymax: ", ymax)
+    #     print("kernel_xmin: ", kernel_xmin)
+    #     print("kernel_xmax: ", kernel_xmax)
+    #     print("kernel_ymin: ", kernel_ymin)
+    #     print("kernel_ymax: ", kernel_ymax)
     
-    print("kernel_xmin: ", kernel_xmin)
-    print("kernel_xmax: ", kernel_xmax)
-    print("kernel_ymin: ", kernel_ymin)
-    print("kernel_ymax: ", kernel_ymax)
-    
-    # heatmap[int(ymin):int(ymax), int(xmin):int(xmax)] += kernel[int(ymin-keypoint_y+kernel_size//2):int(ymax-keypoint_y+kernel_size//2), int(xmin-keypoint_x+kernel_size//2):int(xmax-keypoint_x+kernel_size//2)]
-
     heatmap[ymin:ymax, xmin:xmax] += kernel[kernel_ymin:kernel_ymax, kernel_xmin:kernel_xmax]
 
     # Normalize the heatmap values
     heatmap /= np.max(heatmap)
     return heatmap
+
 
 def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33]):
     # create the output directory if it does not exist
@@ -80,7 +65,6 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
     #prepare index map to reindex the keypoints
     index_map = remap_keypoint_coordinates_index(original_names, new_order_names)
         
-    
      # iterate over the image files
     for image_file in image_files:
                 
@@ -88,66 +72,103 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         image_path = os.path.join(images_dir, image_file)
         keypoint_path = os.path.join(keypoints_dir, os.path.splitext(image_file)[0] + ".txt")
         
-        
-        
         print("=== IMAGE FILE ===")
         print(image_file)
         # check if the keypoint file exists
         if not os.path.exists(keypoint_path):
             print("Keypoint file does not exist for image:", image_path)
             continue
-        
-        # load the keypoint file
-        with open(keypoint_path, "r") as f:
-            keypoints = np.zeros((num_keypoints,2))
-            
-            for line in f:
-                parts = line.strip().split()
-                keypoint_id = int(parts[0])
-                print("normalized x: ", parts[1])
-                print("normalized y: ", parts[2])
-                
-                center_x = float(parts[1]) * heatmap_shape[1]
-                center_y = float(parts[2]) * heatmap_shape[0]
-                
-                print("center_x: ", center_x)
-                print("center_y: ", center_y)
-                # width = float(parts[3]) * heatmap_shape[1]
-                # height = float(parts[4]) * heatmap_shape[0]
-                
-                #Ignore the last keypoint which is the bounding box of the person
-                new_keypoint_id = index_map[keypoint_id]
-                if new_keypoint_id != num_keypoints:
-                    keypoints[new_keypoint_id] = np.array([center_x, center_y])
-                
-            heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
-            
-            for i, keypoint_coord in enumerate(keypoints):
-                print("i: ", i)
-                print("Keypoint_coord x: ", keypoint_coord[0])
-                print("Keypoint_coord y: ", keypoint_coord[1])
-                heatmap = points_to_heatmap(keypoint_coord[0], keypoint_coord[1], kernel_size=11, heatmap_size=(33,33))
-                
-                heatmaps[i] = heatmap
-        
 
-        # create a folder for the heatmaps of this image
-        output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
-        os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(os.path.join(output_dir, 'npy'), exist_ok=True)
-        os.makedirs(os.path.join(output_dir, 'png'), exist_ok=True)
+        # load the image
+        image = cv2.imread(image_path)
+        image_height, image_width, _ = image.shape
+        image_scale_x = heatmap_shape[1] / image_width
+        image_scale_y = heatmap_shape[0] / image_height
         
+        heatmaps = load_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map)
+        
+        print("HEATMAPS SHAPE")
+        print(heatmaps.shape)
+        height = heatmaps.shape[1]
+        width = heatmaps.shape[2]
+        
+                
+        # find the index of the maximum value along the last two dimensions
+        heatmaps = torch.from_numpy(heatmaps)
+        
+        max_idxs = heatmaps.view(17, 1, -1).argmax(dim=-1)
+        max_y = max_idxs // width
+        max_x = max_idxs % width
+        
+        
+        generated_keypoints = torch.cat([max_x, max_y], dim=1)
+        
+        print("max_idxs")
+        print(max_idxs.shape)
+        print(max_idxs)
+        
+        print("generated_keypoints")
+        print(generated_keypoints.shape)
+        print(generated_keypoints)
+        
+        save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir)
 
-        # save the heatmaps to separate files in the output folder
-        for i in range(num_keypoints):
-            output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
-            output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
-            np.save(output_file, heatmaps[i])
-            plt.imshow(heatmaps[i], cmap='hot', interpolation='nearest')
-            plt.colorbar()
-            plt.savefig(output_image)
-            plt.clf()
+        
+        
+def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):
+    # create a folder for the heatmaps of this image
+    output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'npy'), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'png'), exist_ok=True)
+        
+    # save the heatmaps to separate files in the output folder
+    for i in range(num_keypoints):
+        output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
+        output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
+        np.save(output_file, heatmaps[i])
+        plt.imshow(heatmaps[i], cmap='hot', interpolation='nearest')
+        plt.colorbar()
+        plt.savefig(output_image)
+        plt.clf()
+
+# load the keypoints from the image file
+def load_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
+    with open(keypoint_path, "r") as f:
+        keypoints = np.zeros((num_keypoints,2))
             
+        for line in f:
+            parts = line.strip().split()
+            keypoint_id = int(parts[0])
+            print("normalized x: ", parts[1])
+            print("normalized y: ", parts[2])
+                
+            center_x = float(parts[1]) * heatmap_shape[1]
+            center_y = float(parts[2]) * heatmap_shape[0]
+                
+            print("center_x: ", center_x)
+            print("center_y: ", center_y)
+            # width = float(parts[3]) * heatmap_shape[1]
+            # height = float(parts[4]) * heatmap_shape[0]
+                
+            #Ignore the last keypoint which is the bounding box of the person
+            new_keypoint_id = index_map[keypoint_id]
+            if new_keypoint_id != num_keypoints:
+                keypoints[new_keypoint_id] = np.array([center_x, center_y])
+                
+        heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
+            
+        for i, keypoint_coord in enumerate(keypoints):
+            print("i: ", i)
+            print("Keypoint_coord x: ", keypoint_coord[0])
+            print("Keypoint_coord y: ", keypoint_coord[1])
+            heatmap = points_to_heatmap(keypoint_coord[0], keypoint_coord[1], kernel_size=11, heatmap_size=(33,33))
+
+            heatmaps[i] = heatmap
+
+    return heatmaps
+
+    
 def remap_keypoint_coordinates_index(original_names, new_order_names):
     
     # create a dictionary that maps original indices to new indices
@@ -155,9 +176,6 @@ def remap_keypoint_coordinates_index(original_names, new_order_names):
     for i, name in enumerate(original_names):
         index_map[i] = new_order_names.index(name)
     return index_map
-
-    
-    
 
     
 def main():

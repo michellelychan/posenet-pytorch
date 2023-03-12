@@ -85,7 +85,9 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         image_scale_x = heatmap_shape[1] / image_width
         image_scale_y = heatmap_shape[0] / image_height
         
-        heatmaps = load_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map)
+        
+        keypoints = keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map)
+        heatmaps = load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map)
         
         print("HEATMAPS SHAPE")
         print(heatmaps.shape)
@@ -111,9 +113,22 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         print(generated_keypoints.shape)
         print(generated_keypoints)
         
-        save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir)
-
+        print("check all keypoints")
+        for i in range(generated_keypoints.size(0)):
+            print('generated_keypoint: ', generated_keypoints[i])
+            print('ground_truth_keypoint: ', keypoints[i])
         
+        
+        
+        # iterate over the keypoints and print the generated keypoints and the ground truth keypoints
+        # for i in range(num_keypoints):
+        #     print("Ground truth keypoint {}: {}".format(i, heatmaps[i].nonzero()))
+        #     print("Generated keypoint {}: {}".format(i, generated_keypoints[i]))
+        
+        # save the heatmaps to separate files in the output folder
+        # save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir)
+
+
         
 def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):
     # create a folder for the heatmaps of this image
@@ -131,9 +146,23 @@ def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):
         plt.colorbar()
         plt.savefig(output_image)
         plt.clf()
+              
 
 # load the keypoints from the image file
-def load_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
+def load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map):        
+    heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
+            
+    for i, keypoint_coord in enumerate(keypoints):
+        print("i: ", i)
+        print("Keypoint_coord x: ", keypoint_coord[0])
+        print("Keypoint_coord y: ", keypoint_coord[1])
+        heatmap = points_to_heatmap(keypoint_coord[0], keypoint_coord[1], kernel_size=11, heatmap_size=(33,33))
+
+        heatmaps[i] = heatmap
+
+    return heatmaps
+
+def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
     with open(keypoint_path, "r") as f:
         keypoints = np.zeros((num_keypoints,2))
             
@@ -155,20 +184,9 @@ def load_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
             new_keypoint_id = index_map[keypoint_id]
             if new_keypoint_id != num_keypoints:
                 keypoints[new_keypoint_id] = np.array([center_x, center_y])
-                
-        heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
             
-        for i, keypoint_coord in enumerate(keypoints):
-            print("i: ", i)
-            print("Keypoint_coord x: ", keypoint_coord[0])
-            print("Keypoint_coord y: ", keypoint_coord[1])
-            heatmap = points_to_heatmap(keypoint_coord[0], keypoint_coord[1], kernel_size=11, heatmap_size=(33,33))
+    return keypoints
 
-            heatmaps[i] = heatmap
-
-    return heatmaps
-
-    
 def remap_keypoint_coordinates_index(original_names, new_order_names):
     
     # create a dictionary that maps original indices to new indices

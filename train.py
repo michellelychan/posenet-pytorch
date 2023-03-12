@@ -23,7 +23,7 @@ import posenet
 import time
 from torchvision import transforms
 import matplotlib.pyplot as plt
-from heatmap import *
+from ground_truth import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
@@ -32,46 +32,49 @@ parser.add_argument('--test_image_dir', type=str, default= "./images_test")
 parser.add_argument('--output_dir', type=str, default='./output')
 args = parser.parse_args()
 
-class JointsMSELoss(nn.Module):
+class HeatmapOffsetAggregationLoss(nn.Module):
     def __init__(self, use_target_weight=False):
-        super(JointsMSELoss, self).__init__()
-        self.criterion = nn.MSELoss(reduction='mean')
+        super(HeatmapOffsetAggregationLoss, self).__init__()
+        self.bceloss = nn.BCELoss(reduction='mean')
+        self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
+
+
         self.use_target_weight = use_target_weight
 
-    def forward(self, output, target): #removed target_weight
-        batch_size = output.size(0)
-        num_joints = output.size(1)
-        heatmap_size = output.size(2)
-        
-        print("output  size: ", output.size())
-        print("target size: ", target.size())
-        
-        # print the values of the tensors before any operation
-        print("output before reshape: ", output.shape)
-        print("target before reshape: ", target.shape)
-        
-        # heatmaps_pred = output.reshape((batch_size, num_joints, -1)).split(1, 1)
-        # heatmaps_gt = target.reshape((batch_size, num_joints, -1)).split(1, 1)
-        
-        loss = 0
+    def forward(self, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
+        """
+        Compute the heatmap offset aggregation loss with Hough voting
+        Reference from paper Towards Accurate Multi-person Pose Estimation in the Wild
+        :param pred_heatmaps: predicted heatmaps of shape (batch_size, num_joints, height, width)
+        :param target_heatmaps: target heatmaps of shape (batch_size, num_joints, height, width)
+        :param pred_offsets: predicted offsets of shape (batch_size, 2, height, width)
+        :param target_offsets: target offsets of shape (batch_size, 2, height, width)
+        :return: loss value
+        """
+        device = torch.torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        for idx in range(num_joints):
-            heatmap_pred = output[:, idx, :, :]
-            heatmap_gt = output[:, idx, :, :]
-            
-            # if self.use_target_weight:
-            #     loss += 0.5 * self.criterion(
-            #         heatmap_pred.mul(target_weight[:, idx]),
-            #         heatmap_gt.mul(target_weight[:, idx])
-            #     )
-            # else:
-            print("LOSS: ", loss)
-            loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
-            
-        print("LOSS: ", loss.item())
-        print(type(loss))
-        
-        return loss / num_joints
+
+        heatmap_loss = self.bceloss(pred_heatmaps, target_heatmaps)
+
+        pred_x = torch.index_select(pred_offsets, 1, torch.arange(0, 17).to(device))
+        pred_y = torch.index_select(pred_offsets, 1, torch.arange(17, 34).to(device))
+        target_x = torch.index_select(target_offsets, 1, torch.arange(0, 17).to(device))
+        target_y = torch.index_select(target_offsets, 1, torch.arange(17, 34).to(device))
+
+        print("pred_x: ", pred_x.shape)
+        print("pred_y: ", pred_y.shape)
+        print("target_x: ", target_x.shape)
+        print("target_y: ", target_y.shape)
+
+        #find the euclidean distance between the predicted and target offset vectors
+        #euclidean distance = sqrt((pred_x - target_x)^2 + (pred_y - target_y)^2)
+        distances = torch.sqrt(torch.pow(pred_x - target_x, 2) + torch.pow(pred_y - target_y, 2))
+        zero_distances = torch.zeros_like(distances)
+
+        offset_loss = self.smoothl1loss(distances, zero_distances)
+        loss = 4 * heatmap_loss + offset_loss.mean()
+        return loss
+
 
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, scale_factor=1.0, output_stride=16, train=True):
@@ -104,9 +107,7 @@ class PosenetDatasetImage(Dataset):
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-            
-        
-            
+
 
     def __len__(self):
         return len(self.filenames)
@@ -120,7 +121,6 @@ class PosenetDatasetImage(Dataset):
             scale_factor=self.scale_factor,
             output_stride=self.output_stride
         )
-        
         
         # print(filename)
         # print(input_image.shape)
@@ -138,7 +138,6 @@ class PosenetDatasetImage(Dataset):
         # input_image = self.transforms(input_image)
         #return input_image, draw_image, output_scale
         
-
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
     for epoch in range(num_epochs):
@@ -165,6 +164,10 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             print(output[2])
             print(output[3].shape)
             
+            print("output [0] device", output[0].device)
+            print("output [1] device", output[1].device)
+            print("output [2] device", output[2].device)
+            print("output [3] device", output[3].device)
             
             #get keypoint coordinates from output 
             # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
@@ -172,8 +175,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             
             # print(output)
             
-            
-            loss = criterion(output[0], target)
+            loss = criterion(output[0], output[0], output[1], output[1])
 
             # Backward pass
             optimizer.zero_grad()
@@ -190,7 +192,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
                 target.cuda()
                 # data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
                 output = model(data_squeezed)
-                test_loss += criterion(output[0], target).item()
+                test_loss += criterion(output[0], output[0], output[1], output[1]).item()
         test_loss /= len(test_loader.dataset)
 
         print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
@@ -207,8 +209,6 @@ def print_heatmap(heatmap):
     for i in range(heatmap.shape[0]):
         # Create a new directory for this image
         os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
-        
-        
         
         #loop through each joint 
         for j in range(heatmap.shape[1]):
@@ -241,7 +241,7 @@ def main():
     
     
     # Define loss function and optimizer
-    criterion = JointsMSELoss(use_target_weight=False)
+    criterion = HeatmapOffsetAggregationLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Load data

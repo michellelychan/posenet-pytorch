@@ -62,7 +62,7 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         pred_heatmaps_binarized = torch.where(pred_heatmaps > 0.2, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
         target_heatmaps_binarized = torch.where(target_heatmaps > 0.2, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
         
-        heatmap_loss = self.bceloss(prepred_heatmaps_binarized, target_heatmaps_binarized)
+        heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
         
         
         #convert pred_heatmaps and target_heatmaps into a binary heatmap around radius R around predicted and target keypoints
@@ -191,8 +191,16 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             
             # print(output)
 
-            train_heatmaps = output[0]
-            train_offsets = output[1]
+            #get the heatmaps batch from the heatmaps in output [0] according to batch idx
+            train_heatmaps = output[0][batch_idx]
+            height = train_heatmaps.shape[1]
+            width = train_heatmaps.shape[2]
+            
+            train_offsets = output[1][batch_idx]
+            train_displacements_fwd = output[2][batch_idx]
+            train_displacements_bwd = output[2][batch_idx]
+            
+            print("train offsets: ", train_offsets.shape)
             
             #find the root keypoint id's coordinates
             root_id = posenet.PART_IDS['nose']
@@ -203,21 +211,26 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             
             #sorted scores vectors and location of the max of heatmap? 
             
-            scores_vec, max_loc_idx  = posenet.decode_multi.build_part_with_score_torch(score_threshold, LOCAL_MAXIMUM_RADIUS, train_heatmaps)
-            root_score, root_id, root_image_coord = posenet.decode.find_root(scores_vec, max_loc_idx)
+            highest_scores, highest_score_coords  = posenet.decode_multi.build_part_with_score_torch_single_pose(score_threshold, LOCAL_MAXIMUM_RADIUS, train_heatmaps)
+            root_score, root_id, root_image_coord = posenet.decode.find_root(highest_scores, highest_score_coords)
+            
+            displacements_fwd = output[2].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+            displacements_bwd = output[3].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+            
+
             
             #decode pose 
+            print("root_id: ", root_id)
+            print("root_score: ", root_score)
+            print("root_image_coord: ", root_image_coord)
+            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0)), output_stride, displacements_fwd, displacements_bwd)
 
-            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets, output_stride, output[2], output[3])
+            # instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets, output_stride, train_displacements_fwd, train_displacements_bwd)
             # root_score = np.amax(heatmaps[root_id].cpu().detach().numpy())
             # root_coords = np.unravel_index(
             #     np.argmax(heatmaps[root_id].cpu().detach().numpy(), axis=None),
             #     heatmaps[root_id].shape
             # )
-
-            print("scores_vec shape: ", scores_vec.shape)
-            print("max_loc_idx shape: ", max_loc_idx.shape)
-            
 
             
             loss = criterion(instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)

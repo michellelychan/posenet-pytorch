@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 from posenet.constants import *
 
@@ -24,6 +25,16 @@ def traverse_to_targ_keypoint(
         target_keypoint_id, displaced_point_indices[0], displaced_point_indices[1]]
 
     return score, image_coord
+
+#find the root score and root id and root image coord
+def find_root(scores_vec, max_loc_idx):
+    # Find the index of the keypoint with the highest score
+    root_idx = torch.argmax(scores_vec).item()
+    root_score = scores_vec[root_idx].item()
+    root_id = max_loc_idx[root_idx, 1].item()
+    root_image_coord = max_loc_idx[root_idx, 2:].cpu().numpy()
+
+    return root_score, root_id, root_image_coord
 
 
 def decode_pose(

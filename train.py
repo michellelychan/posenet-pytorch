@@ -24,6 +24,10 @@ import time
 from torchvision import transforms
 import matplotlib.pyplot as plt
 from ground_truth import *
+from posenet.decode_multi import *
+
+
+CUDA_LAUNCH_BLOCKING=1
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
@@ -32,6 +36,7 @@ parser.add_argument('--test_image_dir', type=str, default= "./images_test")
 parser.add_argument('--output_dir', type=str, default='./output')
 args = parser.parse_args()
 
+#Loss function with Hough Voting 
 class HeatmapOffsetAggregationLoss(nn.Module):
     def __init__(self, use_target_weight=False):
         super(HeatmapOffsetAggregationLoss, self).__init__()
@@ -41,7 +46,7 @@ class HeatmapOffsetAggregationLoss(nn.Module):
 
         self.use_target_weight = use_target_weight
 
-    def forward(self, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
+    def forward(self, pred_keypoints, target_keypoints, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
         """
         Compute the heatmap offset aggregation loss with Hough voting
         Reference from paper Towards Accurate Multi-person Pose Estimation in the Wild
@@ -51,28 +56,43 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         :param target_offsets: target offsets of shape (batch_size, 2, height, width)
         :return: loss value
         """
-        device = torch.torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-        heatmap_loss = self.bceloss(pred_heatmaps, target_heatmaps)
-
-        pred_x = torch.index_select(pred_offsets, 1, torch.arange(0, 17).to(device))
-        pred_y = torch.index_select(pred_offsets, 1, torch.arange(17, 34).to(device))
-        target_x = torch.index_select(target_offsets, 1, torch.arange(0, 17).to(device))
-        target_y = torch.index_select(target_offsets, 1, torch.arange(17, 34).to(device))
-
-        print("pred_x: ", pred_x.shape)
-        print("pred_y: ", pred_y.shape)
-        print("target_x: ", target_x.shape)
-        print("target_y: ", target_y.shape)
-
+        pred_heatmaps_binarized = torch.where(pred_heatmaps > 0.2, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
+        target_heatmaps_binarized = torch.where(target_heatmaps > 0.2, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
+        
+        heatmap_loss = self.bceloss(prepred_heatmaps_binarized, target_heatmaps_binarized)
+        
+        
+        #convert pred_heatmaps and target_heatmaps into a binary heatmap around radius R around predicted and target keypoints
+        #R = 1.5
+        #radius R around predicted and target keypoints should be 1, the rest should be 0
+        # pred_x = torch.index_select(pred_offsets, 1, torch.arange(0, 17).to(device))
+        # pred_y = torch.index_select(pred_offsets, 1, torch.arange(17, 34).to(device))
+        # target_x = torch.index_select(target_offsets, 1, torch.arange(0, 17).to(device))
+        # target_y = torch.index_select(target_offsets, 1, torch.arange(17, 34).to(device))
+        
         #find the euclidean distance between the predicted and target offset vectors
         #euclidean distance = sqrt((pred_x - target_x)^2 + (pred_y - target_y)^2)
-        distances = torch.sqrt(torch.pow(pred_x - target_x, 2) + torch.pow(pred_y - target_y, 2))
-        zero_distances = torch.zeros_like(distances)
+        # distances = torch.sqrt(torch.pow(pred_x - target_x, 2) + torch.pow(pred_y - target_y, 2))
+        #?? should I normalize the distances? 
+        
+        
+        max_distance = torch.max(distances)
+        normalized_distances = distances / max_distance
 
-        offset_loss = self.smoothl1loss(distances, zero_distances)
-        loss = 4 * heatmap_loss + offset_loss.mean()
+        zero_distances = torch.zeros_like(normalized_distances)
+
+        offset_loss = self.smoothl1loss(normalized_distances, zero_distances).mean()
+
+        print("heatmap loss: ", heatmap_loss)
+
+        #print the value of the offset loss
+        print("offset loss: ", offset_loss)
+
+        loss = 4 * heatmap_loss + offset_loss
+        print("loss: ", loss)
         return loss
 
 
@@ -139,7 +159,7 @@ class PosenetDatasetImage(Dataset):
         #return input_image, draw_image, output_scale
         
 
-def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
+def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride):
     for epoch in range(num_epochs):
         # Set model to train mode
         model.train()
@@ -157,26 +177,53 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs):
             #heatmap size is num of images x 17 keypoints x resolution x resolution 
             #eg. if image size is 225 with output stride of 16, then resolution is 15 
             
-            print("OUTPUT SHAPES")
-            print(output[0].shape)
-            print(output[1].shape)
-            print(output[2].shape)
-            print(output[2])
-            print(output[3].shape)
+            # print("OUTPUT SHAPES")
+            # print(output[0].shape)
+            # print(output[1].shape)
+            # print(output[2].shape)
+            # print(output[2])
+            # print(output[3].shape)
             
-            print("output [0] device", output[0].device)
-            print("output [1] device", output[1].device)
-            print("output [2] device", output[2].device)
-            print("output [3] device", output[3].device)
             
             #get keypoint coordinates from output 
             # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
             # print("Keypoint coords: ", keypoint_coords)
             
             # print(output)
-            
-            loss = criterion(output[0], output[0], output[1], output[1])
 
+            train_heatmaps = output[0]
+            train_offsets = output[1]
+            
+            #find the root keypoint id's coordinates
+            root_id = posenet.PART_IDS['nose']
+
+            #get keypoint coordinates from train data heatmap and offsets
+            score_threshold = 0.5
+            
+            
+            #sorted scores vectors and location of the max of heatmap? 
+            
+            scores_vec, max_loc_idx  = posenet.decode_multi.build_part_with_score_torch(score_threshold, LOCAL_MAXIMUM_RADIUS, train_heatmaps)
+            root_score, root_id, root_image_coord = posenet.decode.find_root(scores_vec, max_loc_idx)
+            
+            #decode pose 
+
+            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets, output_stride, output[2], output[3])
+            # root_score = np.amax(heatmaps[root_id].cpu().detach().numpy())
+            # root_coords = np.unravel_index(
+            #     np.argmax(heatmaps[root_id].cpu().detach().numpy(), axis=None),
+            #     heatmaps[root_id].shape
+            # )
+
+            print("scores_vec shape: ", scores_vec.shape)
+            print("max_loc_idx shape: ", max_loc_idx.shape)
+            
+
+            
+            loss = criterion(instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
+            
+            print("LOSS: ", loss)
+            
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
@@ -233,12 +280,11 @@ def main():
     output_stride = model.output_stride
 
     # Set up training parameters
-    batch_size = 32
+    batch_size = 2
     learning_rate = 0.001
     num_epochs = 10
     
     plt = points_to_heatmap(4.5, 4.7, 21)
-    
     
     # Define loss function and optimizer
     criterion = HeatmapOffsetAggregationLoss()
@@ -253,7 +299,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # Training loop
-    train(model, train_loader, test_loader, criterion, optimizer, num_epochs)
+    train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride)
     print('Setting up...')
     
 

@@ -18,11 +18,10 @@ def traverse_to_targ_keypoint(
     #make source_keypoint addable to displacements
     #print source_keypoint type is it np array or tensor
     # print("source_keypoint type: ", type(source_keypoint))
-    # print("displacements type: ", type(displacements))
+    print("displacements type: ", type(displacements))
     # print("displacements shape: ", displacements.shape)
     # print("source_keypoint shape: ", source_keypoint.shape)
     
-    displacement_value = displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
 #     print("displacements_value shape: ", displacement_value.shape)
 #     print("displacements_value value: ", displacement_value) 
 
@@ -31,7 +30,7 @@ def traverse_to_targ_keypoint(
 #     print("edge id: ", edge_id)
     
     # displaced_point = source_keypoint + displacement_value
-
+    
     displaced_point = source_keypoint + displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
 
 #     print("displacements value: ", displaced_point)

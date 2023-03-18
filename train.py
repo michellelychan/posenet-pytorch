@@ -40,13 +40,13 @@ args = parser.parse_args()
 class HeatmapOffsetAggregationLoss(nn.Module):
     def __init__(self, use_target_weight=False):
         super(HeatmapOffsetAggregationLoss, self).__init__()
-        self.bceloss = nn.BCELoss(reduction='mean')
+        self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
 
 
         self.use_target_weight = use_target_weight
 
-    def forward(self, pred_keypoints, target_keypoints, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
+    def forward(self, score_threshold, pred_keypoints, target_keypoints, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
         """
         Compute the heatmap offset aggregation loss with Hough voting
         Reference from paper Towards Accurate Multi-person Pose Estimation in the Wild
@@ -59,11 +59,17 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-        pred_heatmaps_binarized = torch.where(pred_heatmaps > 0.2, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
-        target_heatmaps_binarized = torch.where(target_heatmaps > 0.2, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
+        pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
+        target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
         
         heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
         
+        print("pred_heatmaps.requires_grad:", pred_heatmaps.requires_grad)
+        print("pred_offsets.requires_grad:", pred_offsets.requires_grad)
+        
+        
+        # Print the tensors to check their gradient status
+
         
         #convert pred_heatmaps and target_heatmaps into a binary heatmap around radius R around predicted and target keypoints
         #R = 1.5
@@ -79,12 +85,20 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         #?? should I normalize the distances? 
         
         
-        max_distance = torch.max(distances)
-        normalized_distances = distances / max_distance
+        #compute the difference between the predicted offsets and the ground truth offsets
+        diff = pred_offsets - target_offsets
+        print("pred keypoints shape: ", pred_keypoints.shape)
+        print("target keypoints shape: ", target_keypoints.shape)
+        
+        #Compute the distance between the keypoint position lk and the position xi
+        distances = torch.norm(pred_keypoints - target_keypoints, dim=1)
+        print("distance shape: ", distances.shape)
 
-        zero_distances = torch.zeros_like(normalized_distances)
 
-        offset_loss = self.smoothl1loss(normalized_distances, zero_distances).mean()
+
+        zero_distances = torch.zeros_like(distances)
+
+        offset_loss = self.smoothl1loss(distances, zero_distances).mean()
 
         print("heatmap loss: ", heatmap_loss)
 
@@ -160,43 +174,51 @@ class PosenetDatasetImage(Dataset):
         
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride):
+    
     for epoch in range(num_epochs):
         # Set model to train mode
+        
+            
         model.train()
         
+        
+              
         print(train_loader)
+        
+        print("train loader: ", next(iter(train_loader)))
         
         for batch_idx, (data, target, _) in enumerate(train_loader):
             # print("ENUMERATE")
             
+            print("batch size: ", train_loader.batch_size)
+            
             data.cuda()
+            print("data shape: ", data.shape)
+    
             data_squeezed = data.squeeze()
+        
+            print("data_squeezed shape: ", data_squeezed.shape)
             target.cuda()
             output = model(data_squeezed)
+            
             #heatmap tensor = output[0] 
             #heatmap size is num of images x 17 keypoints x resolution x resolution 
             #eg. if image size is 225 with output stride of 16, then resolution is 15 
             
-            # print("OUTPUT SHAPES")
-            # print(output[0].shape)
-            # print(output[1].shape)
-            # print(output[2].shape)
-            # print(output[2])
-            # print(output[3].shape)
-            
-            
-            #get keypoint coordinates from output 
-            # keypoint_coords = posenet.decode.decode_pose(output[0], output_scale=1.0)
-            # print("Keypoint coords: ", keypoint_coords)
-            
-            # print(output)
-
+        
             #get the heatmaps batch from the heatmaps in output [0] according to batch idx
+            print("batch_idx: ", batch_idx)
+            print("output[0] shape: ", output[0].shape)
+            
+            
             train_heatmaps = output[0][batch_idx]
             height = train_heatmaps.shape[1]
             width = train_heatmaps.shape[2]
             
             train_offsets = output[1][batch_idx]
+            
+            
+            
             train_displacements_fwd = output[2][batch_idx]
             train_displacements_bwd = output[2][batch_idx]
             
@@ -216,25 +238,33 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             
             displacements_fwd = output[2].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
             displacements_bwd = output[3].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+            train_offsets_reshaped = train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+
+            displacements_fwd_tensor = torch.tensor(displacements_fwd, requires_grad=True)
+            displacements_bwd_tensor = torch.tensor(displacements_bwd, requires_grad=True)
+            # train_offsets_reshaped_tensor = torch.tensor(train_offsets_reshaped, requires_grad=True)
             
+            print("pred_displacement_fwd.requires_grad:", displacements_fwd_tensor.requires_grad)
+            print("pred_displacement_bwd.requires_grad:", displacements_bwd_tensor.requires_grad)
 
             
             #decode pose 
             print("root_id: ", root_id)
             print("root_score: ", root_score)
             print("root_image_coord: ", root_image_coord)
-            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0)), output_stride, displacements_fwd, displacements_bwd)
-
-            # instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets, output_stride, train_displacements_fwd, train_displacements_bwd)
-            # root_score = np.amax(heatmaps[root_id].cpu().detach().numpy())
-            # root_coords = np.unravel_index(
-            #     np.argmax(heatmaps[root_id].cpu().detach().numpy(), axis=None),
-            #     heatmaps[root_id].shape
-            # )
+            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets_reshaped, output_stride, displacements_fwd, displacements_bwd)
 
             
-            loss = criterion(instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
+            instance_keypoint_coords = torch.tensor(instance_keypoint_coords, requires_grad=True)
+            instance_keypoint_coords.cuda()
+            train_offsets = torch.tensor(train_offsets, requires_grad=True)
+            train_heatmaps = torch.tensor(train_offsets, requires_grad=True)
             
+            
+            loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
+            
+            print("loss.requires_grad:", loss.requires_grad)
+
             print("LOSS: ", loss)
             
             # Backward pass
@@ -290,6 +320,10 @@ def main():
     #instatiate model 
     model = posenet.load_model(args.model)
     model = model.cuda()
+    
+    for param in model.parameters():
+        param.requires_grad = True
+    
     output_stride = model.output_stride
 
     # Set up training parameters

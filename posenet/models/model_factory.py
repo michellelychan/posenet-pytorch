@@ -13,7 +13,7 @@ def load_model(model_id, output_stride=16, model_dir=MODEL_DIR):
     if not os.path.exists(model_path):
         print('Cannot find models file %s, converting from tfjs...' % model_path)
         from posenet.converter.tfjs2pytorch import convert
-        convert(model_id, model_dir, check=False)
+        convert(model_id, model_dir, check=True)
         assert os.path.exists(model_path)
 
     model = MobileNetV1(model_id, output_stride=output_stride)

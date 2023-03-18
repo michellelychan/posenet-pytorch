@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
+
 
 from posenet.constants import *
 
@@ -15,26 +17,30 @@ def traverse_to_targ_keypoint(
     
     #make source_keypoint addable to displacements
     #print source_keypoint type is it np array or tensor
-    print("source_keypoint type: ", type(source_keypoint))
-    print("displacements type: ", type(displacements))
-    print("source_keypoint shape: ", source_keypoint.shape)
+    # print("source_keypoint type: ", type(source_keypoint))
+    # print("displacements type: ", type(displacements))
+    # print("displacements shape: ", displacements.shape)
+    # print("source_keypoint shape: ", source_keypoint.shape)
     
     displacement_value = displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
-    print("displacements shape: ", displacement_value.shape)
-    
-    print("source_keypoing_indices[0]: ", source_keypoint_indices[0])
-    print("source_keypoint_indices[1]: ", source_keypoint_indices[1])
-    print("edge id: ", edge_id)
+#     print("displacements_value shape: ", displacement_value.shape)
+#     print("displacements_value value: ", displacement_value) 
+
+#     print("source_keypoing_indices[0]: ", source_keypoint_indices[0])
+#     print("source_keypoint_indices[1]: ", source_keypoint_indices[1])
+#     print("edge id: ", edge_id)
     
     # displaced_point = source_keypoint + displacement_value
 
     displaced_point = source_keypoint + displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
-    print("displacements value: ", displaced_point) 
 
-    print("displacements value: ", displaced_point) 
-    print("source_keypoint shape: ", source_keypoint.shape)
-    print("displacements shape: ", displacements.shape)
+#     print("displacements value: ", displaced_point)
+#     print("source_keypoint shape: ", source_keypoint.shape)
     
+    
+#     print("displacements shape: ", displacements.shape)
+    
+
 
     displaced_point_indices = np.clip(
         np.round(displaced_point / output_stride), a_min=0, a_max=[height - 1, width - 1]).astype(np.int32)
@@ -75,17 +81,14 @@ def find_root(highest_scores, highest_score_indices):
     print("highest_scores shape: ", highest_scores.shape)
     print("highest_score_indices shape: ", highest_score_indices.shape)
     print("highest_score_indices: ", highest_score_indices)
-    root_idx = torch.argmax(highest_scores).item()
-    print("root_idx: ", root_idx)
-
-    root_score = highest_scores[root_idx].item()
-
-    #find root_id which is the id of the keypoint with the highest score which is which heatmap in scores_vec
-    root_id = highest_scores[root_idx, 0].item()
-
+    root_id = torch.argmax(highest_scores).item()
     print("root_id: ", root_id)
 
-    root_image_coord = highest_score_indices[root_idx].cpu().numpy()
+    root_score = highest_scores[root_id].item()
+
+
+
+    root_image_coord = highest_score_indices[root_id].cpu().numpy()
 
     return root_score, root_id, root_image_coord
 

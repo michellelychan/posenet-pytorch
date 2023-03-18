@@ -187,6 +187,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         
         print("train loader: ", next(iter(train_loader)))
         
+        score_threshold = 0.5
+        
         for batch_idx, (data, target, _) in enumerate(train_loader):
             # print("ENUMERATE")
             
@@ -210,67 +212,68 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             print("batch_idx: ", batch_idx)
             print("output[0] shape: ", output[0].shape)
             
-            
-            train_heatmaps = output[0][batch_idx]
-            height = train_heatmaps.shape[1]
-            width = train_heatmaps.shape[2]
-            
-            train_offsets = output[1][batch_idx]
-            
-            
-            
-            train_displacements_fwd = output[2][batch_idx]
-            train_displacements_bwd = output[2][batch_idx]
-            
-            print("train offsets: ", train_offsets.shape)
-            
-            #find the root keypoint id's coordinates
-            root_id = posenet.PART_IDS['nose']
-
-            #get keypoint coordinates from train data heatmap and offsets
-            score_threshold = 0.5
+            #iterate through the batch size
+            for item_idx, item in enumerate(output[0]):
+                train_heatmaps = item
+                height = train_heatmaps.shape[1]
+                width = train_heatmaps.shape[2]
+                train_offsets = output[1][item_idx]
             
             
-            #sorted scores vectors and location of the max of heatmap? 
             
-            highest_scores, highest_score_coords  = posenet.decode_multi.build_part_with_score_torch_single_pose(score_threshold, LOCAL_MAXIMUM_RADIUS, train_heatmaps)
-            root_score, root_id, root_image_coord = posenet.decode.find_root(highest_scores, highest_score_coords)
+                train_displacements_fwd = output[2][item_idx]
+                train_displacements_bwd = output[2][item_idx]
             
-            displacements_fwd = output[2].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
-            displacements_bwd = output[3].detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
-            train_offsets_reshaped = train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
-
-            displacements_fwd_tensor = torch.tensor(displacements_fwd, requires_grad=True)
-            displacements_bwd_tensor = torch.tensor(displacements_bwd, requires_grad=True)
-            # train_offsets_reshaped_tensor = torch.tensor(train_offsets_reshaped, requires_grad=True)
-            
-            print("pred_displacement_fwd.requires_grad:", displacements_fwd_tensor.requires_grad)
-            print("pred_displacement_bwd.requires_grad:", displacements_bwd_tensor.requires_grad)
+                print("train offsets: ", train_offsets.shape)
+                print("train_displacements_fwd shape: ", train_displacements_fwd.shape)
+                #find the root keypoint id's coordinates
+                # root_id = posenet.PART_IDS['nose']
 
             
-            #decode pose 
-            print("root_id: ", root_id)
-            print("root_score: ", root_score)
-            print("root_image_coord: ", root_image_coord)
-            instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord,train_heatmaps, train_offsets_reshaped, output_stride, displacements_fwd, displacements_bwd)
+                #sorted scores vectors and location of the max of heatmap? 
+            
+                highest_scores, highest_score_coords  = posenet.decode_multi.build_part_with_score_torch_single_pose(score_threshold, LOCAL_MAXIMUM_RADIUS, train_heatmaps)
+                root_score, root_id, root_image_coord = posenet.decode.find_root(highest_scores, highest_score_coords)
+                
+                displacements_fwd = train_displacements_fwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+                
+                print("displacements_fwd reshaped shape: ", displacements_fwd.shape) 
+                
+                displacements_bwd = train_displacements_bwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+                train_offsets_reshaped = train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+
+                displacements_fwd_tensor = torch.tensor(displacements_fwd, requires_grad=True)
+                displacements_bwd_tensor = torch.tensor(displacements_bwd, requires_grad=True)
+                # train_offsets_reshaped_tensor = torch.tensor(train_offsets_reshaped, requires_grad=True)
+            
+                print("pred_displacement_fwd.requires_grad:", displacements_fwd_tensor.requires_grad)
+                print("pred_displacement_bwd.requires_grad:", displacements_bwd_tensor.requires_grad)
 
             
-            instance_keypoint_coords = torch.tensor(instance_keypoint_coords, requires_grad=True)
-            instance_keypoint_coords.cuda()
-            train_offsets = torch.tensor(train_offsets, requires_grad=True)
-            train_heatmaps = torch.tensor(train_offsets, requires_grad=True)
-            
-            
-            loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
-            
-            print("loss.requires_grad:", loss.requires_grad)
+                #decode pose 
+                print("root_id: ", root_id)
+                print("root_score: ", root_score)
+                print("root_image_coord: ", root_image_coord)
+                instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord, train_heatmaps, train_offsets_reshaped, output_stride, displacements_fwd, displacements_bwd)
 
-            print("LOSS: ", loss)
             
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                instance_keypoint_coords = torch.tensor(instance_keypoint_coords, requires_grad=True)
+                instance_keypoint_coords.cuda()
+                train_offsets = torch.tensor(train_offsets, requires_grad=True)
+                train_heatmaps = torch.tensor(train_offsets, requires_grad=True)
+            
+                loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
+            
+                print("loss.requires_grad:", loss.requires_grad)
+                print("LOSS: ", loss)
+            
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                print('Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
+                      .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.item()))
 
         # Evaluate on test set
         model.eval()
@@ -282,7 +285,60 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 target.cuda()
                 # data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
                 output = model(data_squeezed)
-                test_loss += criterion(output[0], output[0], output[1], output[1]).item()
+                
+
+                #iterate through the batch size
+                for item_idx, item in enumerate(output[0]):
+                    test_heatmaps = item
+                    height = test_heatmaps.shape[1]
+                    width = test_heatmaps.shape[2]
+                    test_offsets = output[1][item_idx]
+
+                    ######
+
+
+                    test_displacements_fwd = output[2][item_idx]
+                    test_displacements_bwd = output[2][item_idx]
+            
+                    print("train offsets: ", test_offsets.shape)
+                    print("train_displacements_fwd shape: ", test_displacements_fwd.shape)
+                    #find the root keypoint id's coordinates            
+                    #sorted scores vectors and location of the max of heatmap? 
+            
+                    highest_scores, highest_score_coords  = posenet.decode_multi.build_part_with_score_torch_single_pose(score_threshold, LOCAL_MAXIMUM_RADIUS, test_heatmaps)
+                    root_score, root_id, root_image_coord = posenet.decode.find_root(highest_scores, highest_score_coords)
+                
+                    displacements_fwd = test_displacements_fwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+                    print("test displacements_fwd reshaped shape: ", displacements_fwd.shape) 
+                
+                    displacements_bwd = test_displacements_bwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+                    test_offsets_reshaped = train_offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+
+                    # train_offsets_reshaped_tensor = torch.tensor(train_offsets_reshaped, requires_grad=True)
+            
+                    print("test pred_displacement_fwd.requires_grad:", displacements_fwd_tensor.requires_grad)
+                    print("test pred_displacement_bwd.requires_grad:", displacements_bwd_tensor.requires_grad)
+
+            
+                    #decode pose 
+                    print("test root_id: ", root_id)
+                    print("test root_score: ", root_score)
+                    print("test root_image_coord: ", root_image_coord)
+                    instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord, test_heatmaps, test_offsets_reshaped, output_stride, displacements_fwd, displacements_bwd)
+                    
+                    instance_keypoint_coords = torch.tensor(instance_keypoint_coords)
+                    instance_keypoint_coords.cuda()
+                    train_offsets = torch.tensor(train_offsets)
+                    train_heatmaps = torch.tensor(train_offsets)
+                    
+                    print("test instance_keypoint_coords.requires_grad: ", instance_keypoint_coords.requires_grad)
+                    print("test train_offsets.requires_grad: ", train_offsets.requires_grad)
+                    print("test train_heatmaps.requires_grad: ", train_heatmaps.requires_grad)
+            
+                
+                    ######## 
+                    test_loss += criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, test_heatmaps, test_heatmaps, test_offsets, test_offsets).item()
+                
         test_loss /= len(test_loader.dataset)
 
         print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
@@ -290,6 +346,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         
     heatmap = output[0]
     print_heatmap(heatmap)
+
+    
 
 def print_heatmap(heatmap):
     #print heatmap for each image
@@ -347,6 +405,7 @@ def main():
 
     # Training loop
     train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride)
+
     print('Setting up...')
     
 

@@ -18,7 +18,7 @@ def traverse_to_targ_keypoint(
     #make source_keypoint addable to displacements
     #print source_keypoint type is it np array or tensor
     # print("source_keypoint type: ", type(source_keypoint))
-    print("displacements type: ", type(displacements))
+    # print("displacements type: ", type(displacements))
     # print("displacements shape: ", displacements.shape)
     # print("source_keypoint shape: ", source_keypoint.shape)
     
@@ -31,7 +31,13 @@ def traverse_to_targ_keypoint(
     
     # displaced_point = source_keypoint + displacement_value
     
-    displaced_point = source_keypoint + displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
+    print("inside traverse_to_targ_keypoint ******")
+    print("source_keypoint shape: ", source_keypoint.shape)
+    print("source_keypoint: ", source_keypoint)
+    print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]] shape: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]].shape)
+    print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]])
+    displacement_vector = displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
+    displaced_point = source_keypoint + displacement_vector
 
 #     print("displacements value: ", displaced_point)
 #     print("source_keypoint shape: ", source_keypoint.shape)
@@ -39,7 +45,7 @@ def traverse_to_targ_keypoint(
     
 #     print("displacements shape: ", displacements.shape)
     
-
+    
 
     displaced_point_indices = np.clip(
         np.round(displaced_point / output_stride), a_min=0, a_max=[height - 1, width - 1]).astype(np.int32)
@@ -49,7 +55,7 @@ def traverse_to_targ_keypoint(
     image_coord = displaced_point_indices * output_stride + offsets[
         target_keypoint_id, displaced_point_indices[0], displaced_point_indices[1]]
 
-    return score, image_coord
+    return score, image_coord, displacement_vector
 
 #find the root score and root id and root image coord
 def build_part_with_score_torch_single_pose(score_threshold, local_max_radius, scores):
@@ -71,15 +77,40 @@ def build_part_with_score_torch_single_pose(score_threshold, local_max_radius, s
         if score > highest_scores[keypoint_idx]:
             highest_scores[keypoint_idx] = score
             highest_score_indices[keypoint_idx] = torch.tensor([y, x])
-
+                                      
     return highest_scores, highest_score_indices
+
+
+def print_decoded_heatmap(heatmap):
+    #print heatmap for each image
+    os.makedirs('decoded_heatmaps', exist_ok=True)
+    
+    #loop through the 15 images 
+    for i in range(heatmap.shape[0]):
+        # Create a new directory for this image
+        os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
+        
+        #loop through each joint 
+        for j in range(heatmap.shape[1]):
+            joint_heatmap = heatmap[i, j, :, :].squeeze()
+            
+            # Plot the heatmap
+            plt.gca().set_aspect('equal', adjustable='box')
+            plt.imshow(joint_heatmap.detach().cpu().numpy(), cmap='hot', interpolation='nearest')
+            plt.colorbar()
+            
+            # Save the heatmap in the corresponding image folder
+            plt.savefig(f'./heatmaps/image_{i}/joint_{j}_heatmap.png')
+            
+            # Clear the plot
+            plt.clf()
 
 #find the root score and root id and root image coord
 def find_root(highest_scores, highest_score_indices):
     # Find the index of the keypoint with the highest score
-    print("highest_scores shape: ", highest_scores.shape)
-    print("highest_score_indices shape: ", highest_score_indices.shape)
-    print("highest_score_indices: ", highest_score_indices)
+    # print("highest_scores shape: ", highest_scores.shape)
+    # print("highest_score_indices shape: ", highest_score_indices.shape)
+    # print("highest_score_indices: ", highest_score_indices)
     root_id = torch.argmax(highest_scores).item()
     print("root_id: ", root_id)
 
@@ -109,29 +140,34 @@ def decode_pose(
     instance_keypoint_coords = np.zeros((num_parts, 2))
     instance_keypoint_scores[root_id] = root_score
     instance_keypoint_coords[root_id] = root_image_coord
+    
+    instance_displacement_vectors = np.zeros((num_edges, 2))
 
     for edge in reversed(range(num_edges)):
         target_keypoint_id, source_keypoint_id = PARENT_CHILD_TUPLES[edge]
         if (instance_keypoint_scores[source_keypoint_id] > 0.0 and
                 instance_keypoint_scores[target_keypoint_id] == 0.0):
-            score, coords = traverse_to_targ_keypoint(
+            score, coords, displacement_vector = traverse_to_targ_keypoint(
                 edge,
                 instance_keypoint_coords[source_keypoint_id],
                 target_keypoint_id,
                 scores, offsets, output_stride, displacements_bwd)
             instance_keypoint_scores[target_keypoint_id] = score
             instance_keypoint_coords[target_keypoint_id] = coords
+            instance_displacement_vectors[edge] = displacement_vector
 
     for edge in range(num_edges):
         source_keypoint_id, target_keypoint_id = PARENT_CHILD_TUPLES[edge]
         if (instance_keypoint_scores[source_keypoint_id] > 0.0 and
                 instance_keypoint_scores[target_keypoint_id] == 0.0):
-            score, coords = traverse_to_targ_keypoint(
+            score, coords, displacement_vector = traverse_to_targ_keypoint(
                 edge,
                 instance_keypoint_coords[source_keypoint_id],
                 target_keypoint_id,
                 scores, offsets, output_stride, displacements_fwd)
             instance_keypoint_scores[target_keypoint_id] = score
             instance_keypoint_coords[target_keypoint_id] = coords
+            instance_displacement_vectors[edge] = displacement_vector
+    
 
-    return instance_keypoint_scores, instance_keypoint_coords
+    return instance_keypoint_scores, instance_keypoint_coords, instance_displacement_vectors

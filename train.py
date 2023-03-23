@@ -25,6 +25,7 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 from ground_truth import *
 from posenet.decode_multi import *
+from visualizers import *
 
 
 CUDA_LAUNCH_BLOCKING=1
@@ -34,6 +35,8 @@ parser.add_argument('--model', type=int, default=101)
 parser.add_argument('--train_image_dir', type=str, default='./images_train')
 parser.add_argument('--test_image_dir', type=str, default= "./images_test")
 parser.add_argument('--output_dir', type=str, default='./output')
+parser.add_argument('--scale_factor', type=float, default=1.0)
+
 args = parser.parse_args()
 
 #Loss function with Hough Voting 
@@ -69,16 +72,6 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         
         
         # Print the tensors to check their gradient status
-
-        
-        #convert pred_heatmaps and target_heatmaps into a binary heatmap around radius R around predicted and target keypoints
-        #R = 1.5
-        #radius R around predicted and target keypoints should be 1, the rest should be 0
-        # pred_x = torch.index_select(pred_offsets, 1, torch.arange(0, 17).to(device))
-        # pred_y = torch.index_select(pred_offsets, 1, torch.arange(17, 34).to(device))
-        # target_x = torch.index_select(target_offsets, 1, torch.arange(0, 17).to(device))
-        # target_y = torch.index_select(target_offsets, 1, torch.arange(17, 34).to(device))
-        
         #find the euclidean distance between the predicted and target offset vectors
         #euclidean distance = sqrt((pred_x - target_x)^2 + (pred_y - target_y)^2)
         # distances = torch.sqrt(torch.pow(pred_x - target_x, 2) + torch.pow(pred_y - target_y, 2))
@@ -166,115 +159,126 @@ class PosenetDatasetImage(Dataset):
         if input_image_tensor.shape[-2:] != (513, 513):
             input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
             # print(f"Resized image {filename}: ", input_image_resized.shape)
-            return input_image_resized, draw_image, output_scale
+            return input_image_resized, draw_image, output_scale, filename
         else:
-            return input_image_tensor, draw_image, output_scale
+            return input_image_tensor, draw_image, output_scale, filename
         
         # input_image = self.transforms(input_image)
         #return input_image, draw_image, output_scale
         
 
-def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride):
-    
+def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train=True):
     for epoch in range(num_epochs):
-        # Set model to train mode
-        
-            
-        model.train()
-        
-        
-              
-        print(train_loader)
-        
-        print("train loader: ", next(iter(train_loader)))
         
         score_threshold = 0.5
-
         
-        for batch_idx, (data, target, _) in enumerate(train_loader):
-            # print("ENUMERATE")
+        # Set model to train mode
+        if is_train:
+            model.train()
+              
+            print(train_loader)
+        
+            print("train loader: ", next(iter(train_loader)))
+        
             
 
-            print("batch size: ", train_loader.batch_size)
+            for batch_idx, (data, draw_image, output_scale, filenames) in enumerate(train_loader):
+                # print("ENUMERATE")
             
-            data.cuda()
-            print("data shape: ", data.shape)
+                print("batch size: ", train_loader.batch_size)
+            
+                data.cuda()
+                print("data shape: ", data.shape)
     
-            data_squeezed = data.squeeze()
+                data_squeezed = data.squeeze()
         
-            print("data_squeezed shape: ", data_squeezed.shape)
-            target.cuda()
-            output = model(data_squeezed)
+                print("data_squeezed shape: ", data_squeezed.shape)
+                output = model(data_squeezed)
             
-            #heatmap tensor = output[0] 
-            #heatmap size is num of images x 17 keypoints x resolution x resolution 
-            #eg. if image size is 225 with output stride of 16, then resolution is 15 
+                #heatmap tensor = output[0] 
+                #heatmap size is num of images x 17 keypoints x resolution x resolution 
+                #eg. if image size is 225 with output stride of 16, then resolution is 15 
             
         
-            #get the heatmaps batch from the heatmaps in output [0] according to batch idx
-            print("batch_idx: ", batch_idx)
-            print("output[0] shape: ", output[0].shape)
+                #get the heatmaps batch from the heatmaps in output [0] according to batch idx
+                print("batch_idx: ", batch_idx)
+                print("output[0] shape: ", output[0].shape)
             
-            #iterate through the batch size
-            for item_idx, item in enumerate(output[0]):
-                train_heatmaps = item
-                height = train_heatmaps.shape[1]
-                width = train_heatmaps.shape[2]
+                #iterate through the batch size
+                for item_idx, item in enumerate(output[0]):
+                    train_heatmaps = item
+                    height = train_heatmaps.shape[1]
+                    width = train_heatmaps.shape[2]
                 
-                offsets = output[1][item_idx]
-                displacements_fwd = output[2][item_idx]
-                displacements_bwd = output[2][item_idx]
-                
-                is_train = True
-                
-                instance_keypoint_coords, _ , train_heatmaps, train_offsets = decode_pose_from_batch_item(item, offsets, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
+                    offsets = output[1][item_idx]
+                    displacements_fwd = output[2][item_idx]
+                    displacements_bwd = output[2][item_idx]
 
-                loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
-            
-                print("loss.requires_grad:", loss.requires_grad)
-                print("LOSS: ", loss)
-            
-                # Backward pass
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                    #turn epoch to text
+                    appended_text = "train_" + str(epoch) + "_"
+                
+                    is_train = True
+                
+                    instance_keypoint_coords, instance_keypoint_scores , train_heatmaps, train_offsets = decode_pose_from_batch_item(epoch, image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
+                    draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, instance_keypoint_scores, instance_keypoint_coords, filenames[item_idx], include_displacements=False)
 
-                print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
-                      .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.item()))
+                    loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
+            
+                    print("loss.requires_grad:", loss.requires_grad)
+                    print("LOSS: ", loss)
+            
+                    # Backward pass
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
+                          .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.item()))
 
         # Evaluate on test set
-        model.eval()
-        test_loss = 0
+            model.eval()
+            test_loss = 0
+        
         with torch.no_grad():
-            for data, target, _ in test_loader:
+            for batch_idx, (data, draw_image, output_scale, filenames) in enumerate(test_loader):
                 data.cuda()
                 data_squeezed = data.squeeze()
-                target.cuda()
                 # data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
                 output = model(data_squeezed)
-
+                
+                test_loss = 0
+                
                 
                 #iterate through the batch size
                 for item_idx, item in enumerate(output[0]):
-                    is_train = False
+                    
+                    is_train_decoding = False
+                    
                     offsets = output[1][item_idx]
                     displacements_fwd = output[2][item_idx]
                     displacements_bwd = output[3][item_idx]
                     
-                    instance_keypoint_coords, _ , test_heatmaps, test_offsets = decode_pose_from_batch_item(item, offsets, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
+                    test_heatmaps = item
+                    height = test_heatmaps.shape[1]
+                    width = test_heatmaps.shape[2]
+                    
+                    instance_keypoint_coords, instance_keypoint_scores , test_heatmaps, test_offsets = decode_pose_from_batch_item(epoch, image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train_decoding)
+
+                    appended_text = "test_"
+
+                    draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, instance_keypoint_scores, instance_keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     ######## 
                     test_loss += criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, test_heatmaps, test_heatmaps, test_offsets, test_offsets).item()
                 
-        test_loss /= len(test_loader.dataset)
+            test_loss /= len(test_loader.dataset)
 
-        print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(
-            epoch+1, loss.item(), test_loss))
+            # print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(epoch+1, test_loss))
         
     heatmap = output[0]
     print_heatmap(heatmap)
 
-def decode_pose_from_batch_item(item, offsets, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train):
+def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train):
     heatmaps = item
     
     ######
@@ -285,56 +289,37 @@ def decode_pose_from_batch_item(item, offsets, height, width, score_threshold, L
             
     highest_scores, highest_score_coords  = posenet.decode_multi.build_part_with_score_torch_single_pose(score_threshold, LOCAL_MAXIMUM_RADIUS, heatmaps)
     root_score, root_id, root_image_coord = posenet.decode.find_root(highest_scores, highest_score_coords)
-                
+    
+    highest_score_coords = highest_score_coords * scale_factor * output_stride
+
+    #save coordinates into image before decoding pose
+    appended_text = "before_decode_" + str(epoch) + "_"
+    output_dir = "output_before_decode"
+    
+    
     displacements_fwd_reshaped = displacements_fwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
-    print(is_train, " train displacements_fwd reshaped shape: ", displacements_fwd_reshaped.shape) 
+    # print(is_train, " train displacements_fwd reshaped shape: ", displacements_fwd_reshaped.shape) 
                 
     displacements_bwd_reshaped = displacements_bwd.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+    
+
     offsets_reshaped = offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
     heatmaps = torch.tensor(heatmaps, requires_grad=is_train)
 
-    # train_offsets_reshaped_tensor = torch.tensor(train_offsets_reshaped, requires_grad=True)
-            
-    #decode pose 
-    print(is_train, " train root_id: ", root_id)
-    print(is_train, " train root_score: ", root_score)
-    print(is_train, " train root_image_coord: ", root_image_coord)
-    instance_keypoint_scores, instance_keypoint_coords = posenet.decode.decode_pose(root_score, root_id, root_image_coord, heatmaps, offsets_reshaped, output_stride, displacements_fwd_reshaped, displacements_bwd_reshaped)
-                    
+    print("displacements shape before draw_doordinates_to_image_file: ", displacements_fwd.shape)
+    print("displacements shape after draw_doordinates_to_image_file: ", displacements_fwd_reshaped.shape)
+
+    instance_keypoint_scores, instance_keypoint_coords, displacement_vectors = posenet.decode.decode_pose(root_score, root_id, root_image_coord, heatmaps, offsets_reshaped, output_stride, displacements_fwd_reshaped, displacements_bwd_reshaped)
+    
+    draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, highest_scores, highest_score_coords, filename, displacements_fwd_reshaped, displacements_bwd_reshaped, include_displacements=True)
+
     instance_keypoint_coords = torch.tensor(instance_keypoint_coords, requires_grad=is_train)
     instance_keypoint_coords.cuda()
     offsets = torch.tensor(offsets, requires_grad=is_train)
                     
-    print(is_train, " train instance_keypoint_coords.requires_grad: ", instance_keypoint_coords.requires_grad)
-    print(is_train, " train offsets.requires_grad: ", offsets.requires_grad)
-    print(is_train, " train heatmaps.requires_grad: ", heatmaps.requires_grad)
-
     return instance_keypoint_coords, instance_keypoint_scores, heatmaps, offsets
             
 
-def print_heatmap(heatmap):
-    #print heatmap for each image
-    os.makedirs('heatmaps', exist_ok=True)
-    
-    #loop through the 15 images 
-    for i in range(heatmap.shape[0]):
-        # Create a new directory for this image
-        os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
-        
-        #loop through each joint 
-        for j in range(heatmap.shape[1]):
-            joint_heatmap = heatmap[i, j, :, :].squeeze()
-            
-            # Plot the heatmap
-            plt.gca().set_aspect('equal', adjustable='box')
-            plt.imshow(joint_heatmap.detach().cpu().numpy(), cmap='hot', interpolation='nearest')
-            plt.colorbar()
-            
-            # Save the heatmap in the corresponding image folder
-            plt.savefig(f'./heatmaps/image_{i}/joint_{j}_heatmap.png')
-            
-            # Clear the plot
-            plt.clf()
 
 def main():
 
@@ -367,7 +352,12 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # Training loop
-    train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride)
+    image_path = args.train_image_dir
+    output_dir = args.output_dir
+    scale_factor = args.scale_factor
+    is_train = False
+
+    train(model, train_loader, train_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train)
 
     print('Setting up...')
     

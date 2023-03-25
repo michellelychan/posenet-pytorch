@@ -170,4 +170,4 @@ def decode_pose(
             instance_displacement_vectors[edge] = displacement_vector
     
 
-    return instance_keypoint_scores, instance_keypoint_coords, instance_displacement_vectors
+    return instance_keypoint_scores, instance_keypoint_coords

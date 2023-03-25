@@ -170,6 +170,7 @@ def load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map):
 def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
     with open(keypoint_path, "r") as f:
         keypoints = np.zeros((num_keypoints,2))
+        heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
             
         for line in f:
             parts = line.strip().split()
@@ -188,9 +189,14 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
             #Ignore the last keypoint which is the bounding box of the person
             new_keypoint_id = index_map[keypoint_id]
             if new_keypoint_id != num_keypoints:
-                keypoints[new_keypoint_id] = np.array([center_x, center_y])
+                if center_x == 0 and center_y == 0:
+                    heatmaps[new_keypoint_id] = np.zeros((heatmap_shape[0], heatmap_shape[1]))
+                else:
+                    keypoints[new_keypoint_id] = np.array([center_x, center_y])
+                    heatmaps[new_keypoint_id] = draw_gaussian(heatmaps[new_keypoint_id], (center_x, center_y), 2)
             
-    return keypoints
+    return keypoints, heatmaps
+
 
 def remap_keypoint_coordinates_index(original_names, new_order_names):
     

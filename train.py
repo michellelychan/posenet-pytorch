@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 from ground_truth import *
 from posenet.decode_multi import *
 from visualizers import *
+from scipy.optimize import linear_sum_assignment
 
 
 CUDA_LAUNCH_BLOCKING=1
@@ -40,9 +41,10 @@ parser.add_argument('--scale_factor', type=float, default=1.0)
 args = parser.parse_args()
 
 #Loss function with Hough Voting 
-class HeatmapOffsetAggregationLoss(nn.Module):
+
+class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
     def __init__(self, use_target_weight=False):
-        super(HeatmapOffsetAggregationLoss, self).__init__()
+        super(MultiPersonHeatmapOffsetAggregationLoss, self).__init__()
         self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
 
@@ -53,10 +55,10 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         """
         Compute the heatmap offset aggregation loss with Hough voting
         Reference from paper Towards Accurate Multi-person Pose Estimation in the Wild
-        :param pred_heatmaps: predicted heatmaps of shape (batch_size, num_joints, height, width)
-        :param target_heatmaps: target heatmaps of shape (batch_size, num_joints, height, width)
-        :param pred_offsets: predicted offsets of shape (batch_size, 2, height, width)
-        :param target_offsets: target offsets of shape (batch_size, 2, height, width)
+        :param pred_heatmaps: predicted heatmaps of shape 
+        :param target_heatmaps: target heatmaps of shape (num_joints, height, width)
+        :param pred_offsets: predicted offsets of shape (num_joints*2, height, width)
+        :param target_offsets: target offsets of shape (num_joints*2, height, width)
         :return: loss value
         """
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -84,6 +86,8 @@ class HeatmapOffsetAggregationLoss(nn.Module):
         print("target keypoints shape: ", target_keypoints.shape)
         
         #Compute the distance between the keypoint position lk and the position xi
+        pred_keypoints = torch.from_numpy(pred_keypoints)
+        target_keypoints = torch.from_numpy(target_keypoints)
         distances = torch.norm(pred_keypoints - target_keypoints, dim=1)
         print("distance shape: ", distances.shape)
 
@@ -224,7 +228,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, instance_keypoint_scores, instance_keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
-            
+
                     print("loss.requires_grad:", loss.requires_grad)
                     print("LOSS: ", loss)
             
@@ -263,7 +267,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     height = test_heatmaps.shape[1]
                     width = test_heatmaps.shape[2]
                     
-                    print("test_heatmap shape: ", test_heatmap.shape)
+                    print("test_heatmap shape: ", test_heatmaps.shape)
                     print("test displacement fwd shape: ", displacements_fwd.shape)
                     
                     pose_scores, keypoint_scores, keypoint_coords = decode_pose_from_batch_item(epoch, image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train_decoding)
@@ -279,8 +283,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, pose_scores,keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     ######## 
-                    test_loss += criterion(score_threshold, keypoint_coords, keypoint_scores, test_heatmaps, test_heatmaps, offsets, offsets).item()
-                
+                    test_loss += criterion(score_threshold, keypoint_coords, keypoint_coords, test_heatmaps, test_heatmaps, offsets, offsets).item()
+
             test_loss /= len(test_loader.dataset)
 
             # print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(epoch+1, test_loss))
@@ -365,7 +369,7 @@ def main():
     plt = points_to_heatmap(4.5, 4.7, 21)
     
     # Define loss function and optimizer
-    criterion = HeatmapOffsetAggregationLoss()
+    criterion = MultiPersonHeatmapOffsetAggregationLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Load data
@@ -385,7 +389,6 @@ def main():
     train(model, train_loader, train_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train)
 
     print('Setting up...')
-    
 
 
 if __name__ == "__main__":

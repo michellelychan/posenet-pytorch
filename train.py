@@ -112,12 +112,13 @@ class PosenetDatasetImage(Dataset):
         self.output_stride = output_stride
         self.filenames = os.listdir(file_path)
         self.train = train
+        self.ground_truth_keypoints_dir = ground_truth_keypoints_dir
         
         if ground_truth_keypoints_dir:
-            self.keypoints, self.heatmaps, self.offset_vectors = load_ground_truth_data(ground_truth_keypoints_dir)
-
-
+            image_file_names = [os.path.splitext(file)[0] for file in self.filenames if file.endswith((".jpg", ".png"))]
+            self.keypoints, self.heatmaps, self.offset_vectors = load_ground_truth_data(image_file_names, self.ground_truth_keypoints_dir)
             self.is_ground_truth = True
+            print("PosenetDatasetImage filenames: ", self.filenames)
         else:
             self.is_ground_truth = False
         
@@ -153,7 +154,10 @@ class PosenetDatasetImage(Dataset):
         return len(self.filenames)
 
     def __getitem__(self, idx):
+        print("____getitem____ idx: ", idx)
+
         filename = self.filenames[idx]
+        print("____getitem____ filename: ", filename)
         
         # print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
@@ -173,20 +177,23 @@ class PosenetDatasetImage(Dataset):
             # print(f"Resized image {filename}: ", input_image_resized.shape)
         
         if self.is_ground_truth:
+            print("print length of keypoints: ", len(self.keypoints))
             keypoints = self.keypoints[idx]
+
             heatmaps = self.heatmaps[idx]
             offset_vectors = self.offset_vectors[idx]
             
             return input_image_tensor, draw_image, output_scale, filename, keypoints, heatmaps, offset_vectors
                 
         else:
-            return input_image_tensor, draw_image, output
+            return input_image_tensor, draw_image, output_scale, filename
+
         
         # input_image = self.transforms(input_image)
         #return input_image, draw_image, output_scale
         
         
-def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train=True):
+def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True):
     for epoch in range(num_epochs):
         
         score_threshold = 0.25
@@ -199,7 +206,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         
             print("train loader: ", next(iter(train_loader)))
 
-            for batch_idx, (data, draw_image, output_scale, filenames) in enumerate(train_loader):
+            for batch_idx, (data, draw_image, output_scale, filenames, _, _, _) in enumerate(train_loader):
                 # print("ENUMERATE")
             
                 print("batch size: ", train_loader.batch_size)
@@ -239,8 +246,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     #decoder with single pose 
                     
-                    instance_keypoint_coords, instance_keypoint_scores , train_heatmaps, train_offsets = decode_pose_from_batch_item(epoch, image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
-                    draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, instance_keypoint_scores, instance_keypoint_coords, filenames[item_idx], include_displacements=False)
+                    instance_keypoint_coords, instance_keypoint_scores , train_heatmaps, train_offsets = decode_pose_from_batch_item(epoch, train_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
+                    draw_coordinates_to_image_file(appended_text, train_image_path, output_dir, output_stride, scale_factor, instance_keypoint_scores, instance_keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     loss = criterion(score_threshold, instance_keypoint_coords, instance_keypoint_coords, train_heatmaps, train_heatmaps, train_offsets, train_offsets)
 
@@ -285,7 +292,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print("test_heatmap shape: ", test_heatmaps.shape)
                     print("test displacement fwd shape: ", displacements_fwd.shape)
                     
-                    pose_scores, keypoint_scores, keypoint_coords = decode_pose_from_batch_item(epoch, image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train_decoding)
+                    pose_scores, keypoint_scores, keypoint_coords = decode_pose_from_batch_item(epoch, test_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train_decoding)
 
                     print("pose_scores shape: ", pose_scores.shape)
                     print("offsets shape: ", offsets.shape)
@@ -295,7 +302,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     appended_text = "test_"
                     
 
-                    draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, pose_scores,keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
+                    draw_coordinates_to_image_file(appended_text, test_image_path, output_dir, output_stride, scale_factor, pose_scores,keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     ######## 
                     test_loss += criterion(score_threshold, keypoint_coords, keypoint_coords, test_heatmaps, test_heatmaps, offsets, offsets).item()
@@ -386,26 +393,25 @@ def main():
     # Define loss function and optimizer
     criterion = MultiPersonHeatmapOffsetAggregationLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    # Load data
-    train_dataset = PosenetDatasetImage(args.train_image_dir, train=True)
-    test_dataset = PosenetDatasetImage(args.test_image_dir, train=False)
     
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # Training loop
-    image_path = args.train_image_dir
+    train_image_path = args.train_image_dir
+    test_image_path = args.test_image_dir
     output_dir = args.output_dir
     scale_factor = args.scale_factor
-    ground_truth_keypoints_dir = "./labels_train"
+    ground_truth_keypoints_dir = "./keypoints_updated"
     
     is_train = False
     
-    train_dataset = PosenetDatasetImage(image_path, ground_truth_keypoints_dir, scale_factor=1.0, output_stride=output_stride, train=True)
-    
-    train(model, train_loader, train_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train)
+    train_dataset = PosenetDatasetImage(train_image_path, ground_truth_keypoints_dir, scale_factor=1.0, output_stride=output_stride, train=True)
+    test_dataset = PosenetDatasetImage(test_image_path, scale_factor=1.0, output_stride=output_stride, train=True)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train)
 
     print('Setting up...')
 

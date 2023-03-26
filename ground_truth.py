@@ -210,30 +210,34 @@ def remap_keypoint_coordinates_index(original_names, new_order_names):
     return index_map
 
 
-def load_ground_truth_data(heatmaps_dir, keypoints_updated_dir):
+def load_ground_truth_data(image_file_names, keypoints_updated_dir):
     keypoints_list = []
     heatmaps_list = []
     offset_vectors_list = []
 
-    for subdir, dirs, files in os.walk(heatmaps_dir):
-        for file in files:
-            if file.endswith(".txt"):
-                image_file = os.path.splitext(file)[0]
-                keypoints_file = os.path.join(keypoints_updated_dir, image_file + "_keypoints.txt")
-                generated_keypoints_file = os.path.join(keypoints_updated_dir, image_file + "_generated.txt")
-                keypoints = np.loadtxt(keypoints_file, delimiter=",")
-                generated_keypoints = np.loadtxt(generated_keypoints_file, delimiter=",")
-                
-                # Generate the heatmaps from the keypoints
-                heatmaps = load_keypoints(keypoints, num_keypoints=17, heatmap_shape=(33, 33))
+    for image_file_name in image_file_names:
+        image_file_dir = os.path.join(keypoints_updated_dir, image_file_name)
+        keypoints_file = os.path.join(image_file_dir, image_file_name + "_keypoints.txt")
+        print("load ground truth keypoints_file", keypoints_file)
+        generated_keypoints_file = os.path.join(image_file_dir, image_file_name + "_generated.txt")
+        print("load ground truth generated_keypoints file", generated_keypoints_file)
+        keypoints = np.loadtxt(keypoints_file, delimiter=",")
+        generated_keypoints = np.loadtxt(generated_keypoints_file, delimiter=",")
 
-                keypoints_list.append(keypoints)
-                heatmaps_list.append(heatmaps)
-                offset_vectors_list.append(generate_offset_vectors(keypoints, generated_keypoints))
+        # Generate the heatmaps from the keypoints
+        heatmaps = load_keypoints(keypoints, num_keypoints=17, heatmap_shape=(33, 33))
+
+        keypoints_list.append(keypoints)
+        heatmaps_list.append(heatmaps)
+        offset_vectors_list.append(generate_offset_vectors(keypoints, generated_keypoints))
+        print("keypoints_list length: ", len(keypoints_list))
+        print("heatmaps_list length: ", len(heatmaps_list))
+        print("offset_vectors length: ", len(offset_vectors_list))
 
     return keypoints_list, heatmaps_list, offset_vectors_list
 
-
+def image_file_name(file):
+    return os.path.splitext(os.path.basename(file))[0]
 
     
 def main():

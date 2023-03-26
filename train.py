@@ -106,12 +106,20 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
 
 
 class PosenetDatasetImage(Dataset):
-    def __init__(self, file_path, scale_factor=1.0, output_stride=16, train=True):
+    def __init__(self, file_path, ground_truth_keypoints_dir=None, scale_factor=1.0, output_stride=16, train=True):
         self.file_path = file_path
         self.scale_factor = scale_factor
         self.output_stride = output_stride
         self.filenames = os.listdir(file_path)
         self.train = train
+        
+        if ground_truth_keypoints_dir:
+            self.keypoints, self.heatmaps, self.offset_vectors = load_ground_truth_data(ground_truth_keypoints_dir)
+
+
+            self.is_ground_truth = True
+        else:
+            self.is_ground_truth = False
         
         
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
@@ -163,14 +171,21 @@ class PosenetDatasetImage(Dataset):
         if input_image_tensor.shape[-2:] != (513, 513):
             input_image_resized = nn.functional.interpolate(input_image_tensor, size=(513, 513), mode='bilinear', align_corners=True)
             # print(f"Resized image {filename}: ", input_image_resized.shape)
-            return input_image_resized, draw_image, output_scale, filename
+        
+        if self.is_ground_truth:
+            keypoints = self.keypoints[idx]
+            heatmaps = self.heatmaps[idx]
+            offset_vectors = self.offset_vectors[idx]
+            
+            return input_image_tensor, draw_image, output_scale, filename, keypoints, heatmaps, offset_vectors
+                
         else:
-            return input_image_tensor, draw_image, output_scale, filename
+            return input_image_tensor, draw_image, output
         
         # input_image = self.transforms(input_image)
         #return input_image, draw_image, output_scale
         
-
+        
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train=True):
     for epoch in range(num_epochs):
         
@@ -384,8 +399,12 @@ def main():
     image_path = args.train_image_dir
     output_dir = args.output_dir
     scale_factor = args.scale_factor
+    ground_truth_keypoints_dir = "./labels_train"
+    
     is_train = False
-
+    
+    train_dataset = PosenetDatasetImage(image_path, ground_truth_keypoints_dir, scale_factor=1.0, output_stride=output_stride, train=True)
+    
     train(model, train_loader, train_loader, criterion, optimizer, num_epochs, output_stride, image_path, output_dir, scale_factor, is_train)
 
     print('Setting up...')

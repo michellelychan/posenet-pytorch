@@ -6,7 +6,6 @@ import torch
 
 import posenet
 
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
 parser.add_argument('--scale_factor', type=float, default=1.0)

@@ -6,10 +6,13 @@ import os
 from scipy.stats import multivariate_normal
 import torch
 
-def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33]):
+def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33], keypoints_updated_dir="keypoints_updated"):
     # create the output directory if it does not exist
     if not os.path.exists(heatmaps_dir):
-        os.mkdir(heatmaps_dir)
+        os.makedirs(heatmaps_dir)
+        
+    if not os.path.exists(keypoints_updated_dir):
+        os.makedirs(keypoints_updated_dir)
     
     # get the list of image files in the directory
     image_files = sorted(os.listdir(images_dir))
@@ -43,13 +46,27 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         image_scale_x = heatmap_shape[1] / image_width
         image_scale_y = heatmap_shape[0] / image_height
         
+        # create a new directory for the image
+        image_dir = os.path.join(keypoints_updated_dir, os.path.splitext(image_file)[0])
+        if not os.path.exists(image_dir):
+            os.makedirs(image_dir)
         
+        # load the original keypoints
         keypoints = keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map)
-        heatmaps = load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map)
+        original_keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_keypoints.txt")
+        np.savetxt(original_keypoints_file, keypoints, delimiter=",")
         
+        # create the heatmaps from the original keypoints
+        heatmaps = load_keypoints(keypoints, num_keypoints, heatmap_shape)
+        
+        # generate the keypoints from the heatmaps
         generated_keypoints = generated_keypoints_from_heatmaps(heatmaps) 
+        generated_keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_generated.txt")
+        np.savetxt(generated_keypoints_file, generated_keypoints, delimiter=",")
+        
         print("HEATMAPS SHAPE")
         print(heatmaps.shape)
+        
         
         keypoints = torch.from_numpy(keypoints)
         # create the ground truch offset vectors
@@ -58,16 +75,18 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir)
         save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
         
+        
 def generate_offset_vectors(keypoints, generated_keypoints):
     offset_vectors = keypoints - generated_keypoints
     return offset_vectors
         
-def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):    
-        
-    #create empty heatmap 
+def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,33)):
+    if keypoint_x == 0 and keypoint_y == 0:
+        return np.zeros(heatmap_size)
+
+    # Create empty heatmap
     heatmap = np.zeros(heatmap_size)
-    print("heatmap size: ", heatmap.size)
-    
+
     # Compute a Gaussian kernel centered at the keypoint
     kernel_std = kernel_size / 10
     kernel = cv2.getGaussianKernel(kernel_size, kernel_std)
@@ -77,31 +96,18 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
     xmax = min(int(keypoint_x + kernel_size//2 + 1), heatmap_size[1])
     ymin = max(int(keypoint_y - kernel_size//2), 0)
     ymax = min(int(keypoint_y + kernel_size//2 + 1), heatmap_size[0])
-    
-    #how much it is deviating from keypoint_x 
-    #if at keypoint_x, then kernel will be at kernel_size//2
-    
+
     kernel_xmin = max(0, kernel_size//2 - int(keypoint_x) - xmin)
     kernel_xmax = min(kernel_size, kernel_size//2 + xmax - int(keypoint_x))
     kernel_ymin = max(0, kernel_size//2 - int(keypoint_y) + ymin)
     kernel_ymax = min(kernel_size, kernel_size//2 + ymax - int(keypoint_y))
-                      
-    
-    #     print("xmin: ", xmin)
-    #     print("xmax: ", xmax)
-    #     print("ymin: ", ymin)
-    #     print("ymax: ", ymax)
-    
-    #     print("kernel_xmin: ", kernel_xmin)
-    #     print("kernel_xmax: ", kernel_xmax)
-    #     print("kernel_ymin: ", kernel_ymin)
-    #     print("kernel_ymax: ", kernel_ymax)
-    
+
     heatmap[ymin:ymax, xmin:xmax] += kernel[kernel_ymin:kernel_ymax, kernel_xmin:kernel_xmax]
 
     # Normalize the heatmap values
     heatmap /= np.max(heatmap)
     return heatmap
+
 
 #create generated keypoints from heatmaps
 # generated keypoints are created by running a sigmoid function on the heatmap and then argmax to find the x and y coordinates 
@@ -152,8 +158,9 @@ def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):
               
 
 # load the keypoints from the image file
-def load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map):        
+def load_keypoints(keypoints, num_keypoints, heatmap_shape):        
     heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
+
             
     for i, keypoint_coord in enumerate(keypoints):
         print("i: ", i)
@@ -170,7 +177,6 @@ def load_keypoints(keypoints, num_keypoints, heatmap_shape, index_map):
 def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape, index_map):
     with open(keypoint_path, "r") as f:
         keypoints = np.zeros((num_keypoints,2))
-        heatmaps = np.zeros((num_keypoints, heatmap_shape[0], heatmap_shape[1]))
             
         for line in f:
             parts = line.strip().split()
@@ -189,13 +195,10 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
             #Ignore the last keypoint which is the bounding box of the person
             new_keypoint_id = index_map[keypoint_id]
             if new_keypoint_id != num_keypoints:
-                if center_x == 0 and center_y == 0:
-                    heatmaps[new_keypoint_id] = np.zeros((heatmap_shape[0], heatmap_shape[1]))
-                else:
-                    keypoints[new_keypoint_id] = np.array([center_x, center_y])
-                    heatmaps[new_keypoint_id] = draw_gaussian(heatmaps[new_keypoint_id], (center_x, center_y), 2)
+                keypoints[new_keypoint_id] = np.array([center_x, center_y])
             
-    return keypoints, heatmaps
+    return keypoints
+
 
 
 def remap_keypoint_coordinates_index(original_names, new_order_names):
@@ -206,11 +209,36 @@ def remap_keypoint_coordinates_index(original_names, new_order_names):
         index_map[i] = new_order_names.index(name)
     return index_map
 
+
+def load_ground_truth_data(heatmaps_dir, keypoints_updated_dir):
+    keypoints_list = []
+    heatmaps_list = []
+    offset_vectors_list = []
+
+    for subdir, dirs, files in os.walk(heatmaps_dir):
+        for file in files:
+            if file.endswith(".txt"):
+                image_file = os.path.splitext(file)[0]
+                keypoints_file = os.path.join(keypoints_updated_dir, image_file + "_keypoints.txt")
+                generated_keypoints_file = os.path.join(keypoints_updated_dir, image_file + "_generated.txt")
+                keypoints = np.loadtxt(keypoints_file, delimiter=",")
+                generated_keypoints = np.loadtxt(generated_keypoints_file, delimiter=",")
+                
+                # Generate the heatmaps from the keypoints
+                heatmaps = load_keypoints(keypoints, num_keypoints=17, heatmap_shape=(33, 33))
+
+                keypoints_list.append(keypoints)
+                heatmaps_list.append(heatmaps)
+                offset_vectors_list.append(generate_offset_vectors(keypoints, generated_keypoints))
+
+    return keypoints_list, heatmaps_list, offset_vectors_list
+
+
+
     
 def main():
     # heatmap = points_to_heatmap(4.1, 4.7, kernel_size=11)
-    prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps_train", heatmap_shape=[33,33])
-    
+    prepare_ground_truth_data('images_train', 'labels_train', num_keypoints=17, heatmaps_dir="heatmaps_train", heatmap_shape=[33,33], keypoints_updated_dir="keypoints_updated")
 
 if __name__ == "__main__":
     main()

@@ -71,8 +71,11 @@ def decode_multiple_poses(
     scores = scores.cpu().numpy()
     height = scores.shape[1]
     width = scores.shape[2]
+    print("---inside decode pose ---")
+    print("before reshape offsets shape: ", offsets.shape)
     # change dimensions from (x, h, w) to (x//2, h, w, 2) to allow return of complete coord array
-    offsets = offsets.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+    print("after reshape offsets shape: ", offsets.shape)
+    
     displacements_fwd = displacements_fwd.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
     displacements_bwd = displacements_bwd.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
 
@@ -81,18 +84,24 @@ def decode_multiple_poses(
     pose_scores = np.zeros(max_pose_detections)
     pose_keypoint_scores = np.zeros((max_pose_detections, NUM_KEYPOINTS))
     pose_keypoint_coords = np.zeros((max_pose_detections, NUM_KEYPOINTS, 2))
+    overall_offsets = offsets.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
+
+    #offets in shape [max_pose_detections, 17, 2] instead of [17, 33, 33, 2] 
+    pose_offsets = np.zeros((max_pose_detections, NUM_KEYPOINTS, 2))
 
     for root_score, (root_id, root_coord_y, root_coord_x) in zip(part_scores, part_idx):
         root_coord = np.array([root_coord_y, root_coord_x])
-        root_image_coords = root_coord * output_stride + offsets[root_id, root_coord_y, root_coord_x]
+        print("inside root_score offsets shape: ", overall_offsets.shape)
+
+        root_image_coords = root_coord * output_stride + overall_offsets[root_id, root_coord_y, root_coord_x]
 
         if within_nms_radius_fast(
                 pose_keypoint_coords[:pose_count, root_id, :], squared_nms_radius, root_image_coords):
             continue
 
-        keypoint_scores, keypoint_coords = decode_pose(
+        keypoint_scores, keypoint_coords, offsets = decode_pose(
             root_score, root_id, root_image_coords,
-            scores, offsets, output_stride,
+            scores, overall_offsets, output_stride,
             displacements_fwd, displacements_bwd)
 
         pose_score = get_instance_score_fast(
@@ -106,9 +115,10 @@ def decode_multiple_poses(
             pose_scores[pose_count] = pose_score
             pose_keypoint_scores[pose_count, :] = keypoint_scores
             pose_keypoint_coords[pose_count, :, :] = keypoint_coords
+            pose_offsets[pose_count, :, :] = offsets
             pose_count += 1
 
         if pose_count >= max_pose_detections:
             break
 
-    return pose_scores, pose_keypoint_scores, pose_keypoint_coords
+    return pose_scores, pose_keypoint_scores, pose_keypoint_coords, pose_offsets

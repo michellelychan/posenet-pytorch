@@ -31,11 +31,11 @@ def traverse_to_targ_keypoint(
     
     # displaced_point = source_keypoint + displacement_value
     
-    print("inside traverse_to_targ_keypoint ******")
-    print("source_keypoint shape: ", source_keypoint.shape)
-    print("source_keypoint: ", source_keypoint)
-    print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]] shape: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]].shape)
-    print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]])
+    # print("inside traverse_to_targ_keypoint ******")
+    # print("source_keypoint shape: ", source_keypoint.shape)
+    # print("source_keypoint: ", source_keypoint)
+    # print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]] shape: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]].shape)
+    # print("displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]: ", displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]])
     displacement_vector = displacements[edge_id, source_keypoint_indices[0], source_keypoint_indices[1]]
     displaced_point = source_keypoint + displacement_vector
 
@@ -54,8 +54,13 @@ def traverse_to_targ_keypoint(
 
     image_coord = displaced_point_indices * output_stride + offsets[
         target_keypoint_id, displaced_point_indices[0], displaced_point_indices[1]]
+    
+    offset = offsets[target_keypoint_id, displaced_point_indices[0], displaced_point_indices[1]]
+    # print("--inside traverse keypoint -- *")
+    # print("offset shape: ", offset.shape)
+    # print("image coord shape: ", image_coord.shape)
 
-    return score, image_coord, displacement_vector
+    return score, image_coord, displacement_vector, offset
 
 #find the root score and root id and root image coord
 def build_part_with_score_torch_single_pose(score_threshold, local_max_radius, scores):
@@ -132,8 +137,8 @@ def decode_pose(
         displacements_bwd
 ):
     num_parts = scores.shape[0]
-    print("decode pose scores shape: ", scores.shape)
-    print("decode pose num_parts: ", num_parts)
+    # print("decode pose scores shape: ", scores.shape)
+    # print("decode pose num_parts: ", num_parts)
     num_edges = len(PARENT_CHILD_TUPLES)
 
     instance_keypoint_scores = np.zeros(num_parts)
@@ -142,12 +147,13 @@ def decode_pose(
     instance_keypoint_coords[root_id] = root_image_coord
     
     instance_displacement_vectors = np.zeros((num_edges, 2))
+    instance_offsets = np.zeros((num_parts, 2))
 
     for edge in reversed(range(num_edges)):
         target_keypoint_id, source_keypoint_id = PARENT_CHILD_TUPLES[edge]
         if (instance_keypoint_scores[source_keypoint_id] > 0.0 and
                 instance_keypoint_scores[target_keypoint_id] == 0.0):
-            score, coords, displacement_vector = traverse_to_targ_keypoint(
+            score, coords, displacement_vector, offset = traverse_to_targ_keypoint(
                 edge,
                 instance_keypoint_coords[source_keypoint_id],
                 target_keypoint_id,
@@ -155,12 +161,13 @@ def decode_pose(
             instance_keypoint_scores[target_keypoint_id] = score
             instance_keypoint_coords[target_keypoint_id] = coords
             instance_displacement_vectors[edge] = displacement_vector
+            instance_offsets[target_keypoint_id] = offset
 
     for edge in range(num_edges):
         source_keypoint_id, target_keypoint_id = PARENT_CHILD_TUPLES[edge]
         if (instance_keypoint_scores[source_keypoint_id] > 0.0 and
                 instance_keypoint_scores[target_keypoint_id] == 0.0):
-            score, coords, displacement_vector = traverse_to_targ_keypoint(
+            score, coords, displacement_vector, offset = traverse_to_targ_keypoint(
                 edge,
                 instance_keypoint_coords[source_keypoint_id],
                 target_keypoint_id,
@@ -168,6 +175,8 @@ def decode_pose(
             instance_keypoint_scores[target_keypoint_id] = score
             instance_keypoint_coords[target_keypoint_id] = coords
             instance_displacement_vectors[edge] = displacement_vector
+            instance_offsets[target_keypoint_id] = offset
+    
     
 
-    return instance_keypoint_scores, instance_keypoint_coords
+    return instance_keypoint_scores, instance_keypoint_coords, instance_offsets

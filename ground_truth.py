@@ -132,6 +132,7 @@ def save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
     offset_vectors_file = os.path.join(output_dir, os.path.splitext(image_file)[0] + "_offset_vectors.txt")
     #print("=== OFFSET VECTORS FILE ===")
     #print(offset_vectors_file)
+    pose_offset_vectors = np.expand_dims(offset_vectors, axis=0)
     np.savetxt(offset_vectors_file, offset_vectors, fmt="%f", delimiter=",")
         
 def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):

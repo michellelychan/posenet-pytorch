@@ -87,13 +87,13 @@ def draw_skel_and_kp(
     adjacent_keypoints = []
     cv_keypoints = []
     
-    print("draw skeleton keypoint_scores shape: ", keypoint_scores.shape)
-    print("draw skeleton keypoing_coords shape: ", keypoint_coords.shape) 
-    print("Number of instances:", len(instance_scores))
+    # print("draw skeleton keypoint_scores shape: ", keypoint_scores.shape)
+    # print("draw skeleton keypoing_coords shape: ", keypoint_coords.shape) 
+    # print("Number of instances:", len(instance_scores))
 
     for ii, score in enumerate(instance_scores):
         if score < min_pose_score:
-            print(f"Skipping keypoint {ii} with score {ks}")
+            # print(f"Skipping keypoint {ii} with score {ks}")
             continue
 
         new_keypoints = get_adjacent_keypoints(
@@ -103,11 +103,11 @@ def draw_skel_and_kp(
         for ks, kc in zip(keypoint_scores[ii, :], keypoint_coords[ii, :, :]):
             
             if ks < min_part_score:
-                print(f"Instance {ii} score: {score}")
-                print(f"Skipping keypoint {ii} with score {ks}")
+                # print(f"Instance {ii} score: {score}")
+                # print(f"Skipping keypoint {ii} with score {ks}")
                 continue
             
-            print(f"Drawing keypoint {ii} with score {ks} at coords {kc}")
+            # print(f"Drawing keypoint {ii} with score {ks} at coords {kc}")
             cv_keypoints.append(cv2.KeyPoint(kc[1], kc[0], 10. * ks))
 
     if cv_keypoints:

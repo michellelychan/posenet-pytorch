@@ -199,18 +199,19 @@ class PosenetDatasetImage(Dataset):
         
         
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True):
+    step = 0
+    score_threshold = 0.25
+    train_num_batches = len(train_loader)
+
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
         batch_checkpoint = 1
         
-        score_threshold = 0.25
-        step = 0
         epoch_durations = []
         running_loss_value = 0
         test_loss_value = 0
         test_loss = torch.zeros(1)
-        train_num_batches = len(train_loader)
         
         # Set model to train mode
         if is_train:
@@ -362,9 +363,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
                     test_loss += criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], test_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx]).item()
                     
-            test_loss /= len(test_loader.dataset)
+            test_loss /= len(test_loader.dataset) * test_loader.batch_size
             test_loss_value = test_loss.item()
-            wandb.log({"test_loss": test_loss_value}, step=step)
+            print("test_loss_value: ", test_loss_value)
+            print("step: ", step)
+            
+            wandb.log({"test_loss": float(test_loss_value)}, step=step)
             
             
             

@@ -69,11 +69,28 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         """
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+        # Detach the ground truth heatmaps and offsets
+#         target_heatmaps_detached = target_heatmaps.detach()
+        target_offsets_detached = target_offsets.detach()
+#         target_keypoints_detached = target_keypoints.detach()
 
-        pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
+        
+        # # set requires_grad to True for pred_heatmaps, pred_offsets, and pred_keypoints
+        # target_heatmaps_detached.requires_grad_(True)
+        # target_offsets_detached.requires_grad_(True)
+        # target_keypoints_detached.requires_grad_(True)
+        
+        pred_heatmaps_sigmoid = torch.sigmoid(pred_heatmaps)
+        pred_heatmaps_binarized = torch.where(pred_heatmaps_sigmoid > score_threshold, torch.ones_like(pred_heatmaps_sigmoid), torch.zeros_like(pred_heatmaps_sigmoid))
         target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
         
-        heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
+        # Custom BCE loss for binarized tensors while keeping the gradient flow for original tensors
+        heatmap_loss = torch.mean(-1 * (target_heatmaps_binarized * torch.log(pred_heatmaps_sigmoid + 1e-8) + (1 - target_heatmaps_binarized) * torch.log(1 - pred_heatmaps_sigmoid + 1e-8)))
+        print("heatmap loss: ", heatmap_loss)
+#         pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
+#         target_heatmaps_binarized = torch.where(target_heatmaps_detached > score_threshold, torch.ones_like(target_heatmaps_detached), torch.zeros_like(target_heatmaps_detached))
+        
+#         heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
         
         # print("pred_heatmaps.requires_grad:", pred_heatmaps.requires_grad)
         # print("pred_offsets.requires_grad:", pred_offsets.requires_grad)
@@ -85,21 +102,27 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         #?? should I normalize the distances? 
         
         #compute the difference between the predicted offsets and the ground truth offsets
-        diff = pred_offsets - target_offsets
-
-        distances = torch.norm(pred_keypoints - target_keypoints, dim=1)
+        # print("=== predicted offsets ===")
+        diff = pred_offsets - target_offsets_detached
+        
+        # print('pred_offsets shape: ', pred_offsets.shape)
+        # print('target_offsets shape: ', target_offsets.shape)
+        # print('diff shape: ', diff.shape)
+        # distances = torch.norm(pred_keypoints - target_keypoints_detached, dim=1)
         # print("distance shape: ", distances.shape)
 
-        zero_distances = torch.zeros_like(distances)
-        offset_loss = self.smoothl1loss(distances, zero_distances).mean()
-        
+        zero_distances = torch.zeros_like(diff)
+        offset_loss = self.smoothl1loss(diff, zero_distances).mean()
+        print("pred offsets: ", pred_offsets)
+        print("target offsets: ", target_offsets)
+        print("offset loss: ", offset_loss)
 
-        print("heatmap loss: ", heatmap_loss)
+        # print("heatmap loss: ", heatmap_loss)
 
         #print the value of the offset loss
-        print("offset loss: ", offset_loss)
+        # print("offset loss: ", offset_loss)
         loss = 4 * heatmap_loss + offset_loss
-        print("loss: ", loss)
+        # print("loss: ", loss)
         return loss
 
 
@@ -128,6 +151,7 @@ class PosenetDatasetImage(Dataset):
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
         self.filenames = [os.path.basename(file_path) for file_path in self.data]
 
+                
         if  self.train:
             self.transforms = transforms.Compose([
                 #not mandatory - at first don't apply augmentation first before applying 
@@ -146,9 +170,9 @@ class PosenetDatasetImage(Dataset):
             ])
             
             if ground_truth_keypoints_dir:
-                self.keypoints = torch.Tensor(self.keypoints).cuda().requires_grad_(True)
-                self.heatmaps = torch.Tensor(self.heatmaps).cuda().requires_grad_(True)
-                self.offset_vectors = torch.Tensor(self.offset_vectors).cuda().requires_grad_(True)
+                self.keypoints = torch.Tensor(self.keypoints).cuda().requires_grad_(False)
+                self.heatmaps = torch.Tensor(self.heatmaps).cuda().requires_grad_(False)
+                self.offset_vectors = torch.Tensor(self.offset_vectors).cuda().requires_grad_(False)
             
         else:
             self.transforms = transforms.Compose([
@@ -162,10 +186,10 @@ class PosenetDatasetImage(Dataset):
         return len(self.filenames)
 
     def __getitem__(self, idx):
-        print("____getitem____ idx: ", idx)
+        # print("____getitem____ idx: ", idx)
 
         filename = self.filenames[idx]
-        print("____getitem____ filename: ", filename)
+        # print("____getitem____ filename: ", filename)
         
         # print("get_item: ", filename)
         input_image, draw_image, output_scale = posenet.read_imgfile(
@@ -173,6 +197,9 @@ class PosenetDatasetImage(Dataset):
             scale_factor=self.scale_factor,
             output_stride=self.output_stride
         )
+        
+        # print("----input image: ----")
+        # print(input_image)
         
         # print(filename)
         # print(input_image.shape)
@@ -214,37 +241,41 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         test_loss = torch.zeros(1)
         
         # Set model to train mode
+        # print("Initial model weights:")
+        # for name, param in model.named_parameters():
+        #     print(name, param.data)
+        
+        # print("Initial Model weight norms:")
+        # for name, param in model.named_parameters():
+        #     print(name, param.data.norm())
+
+            
         if is_train:
             model.train()
               
             print(train_loader)
         
-            print("train loader: ", next(iter(train_loader)))
+            # print("train loader: ", next(iter(train_loader)))
 
             for batch_idx, (data, draw_image, output_scale, filenames, ground_truth_keypoints, ground_truth_heatmaps, ground_truth_offsets) in enumerate(train_loader):
                 # print("ENUMERATE")
             
-                print("batch size: ", train_loader.batch_size)
+                # print("batch size: ", train_loader.batch_size)
             
                 data.cuda()
-                print("data shape: ", data.shape)
+                # print("data shape: ", data.shape)
     
                 data_squeezed = data.squeeze()
         
-                print("data_squeezed shape: ", data_squeezed.shape)
+                # print("data_squeezed shape: ", data_squeezed.shape)
                 output = model(data_squeezed)
+
                 
                 batch_loss = 0
                 
-            
                 #heatmap tensor = output[0] 
                 #heatmap size is num of images x 17 keypoints x resolution x resolution 
                 #eg. if image size is 225 with output stride of 16, then resolution is 15 
-        
-                #get the heatmaps batch from the heatmaps in output [0] according to batch idx
-                print("batch_idx: ", batch_idx)
-                print("output[0] shape: ", output[0].shape)
-            
                 #iterate through the batch size
                 for item_idx, item in enumerate(output[0]):
                     offsets = output[1][item_idx]
@@ -252,14 +283,16 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     displacements_bwd = output[2][item_idx]
 
                     train_heatmaps = item
-                    print("item (heatmap) type: ", type(item))
+                    # print("item (heatmap) type: ", type(item))
                     
                     height = train_heatmaps.shape[1]
                     width = train_heatmaps.shape[2]
                     
                     # instance_keypoint_coords, instance_keypoint_scores , train_heatmaps, train_offsets = decode_pose_from_batch_item(epoch, train_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
                     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = decode_pose_from_batch_item(epoch, train_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
-
+                    # print("---- keypoint_coords: ----")
+                    # print(keypoint_coords)         
+                    
                     #turn epoch to text
                     appended_text = "train_" + str(epoch) + "_"
                        
@@ -267,15 +300,14 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
+                    
+                    print("decoded_offsets: ", decoded_offsets)
+                    print("decoded_offsets shape: ", decoded_offsets.shape)
 
                     keypoint_coords = torch.from_numpy(keypoint_coords)
                     keypoint_coords = keypoint_coords.to('cuda')                
                     
                     loss = criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], train_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx])
-
-                    print("loss.requires_grad:", loss.requires_grad)
-                    print("LOSS: ", loss)
-                    
             
                     # Backward pass
                     optimizer.zero_grad()
@@ -287,16 +319,22 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     running_loss_value += loss.item()
                     batch_loss += loss
                     
-                    if batch_idx % batch_checkpoint == batch_checkpoint-1:
-                        step += 1
-                        wandb.log({"train_loss": running_loss_value / batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
-                        print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss_value / batch_checkpoint))
-                        running_loss_value = 0.0
+                if batch_idx % batch_checkpoint == batch_checkpoint-1:
+                    step += 1
+                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
+                    print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss_value / batch_checkpoint))
+                    running_loss_value = 0.0
                 
                 batch_loss.backward()
                 optimizer.step()
+            # print("Updated Model weight norms:")
+            # for name, param in model.named_parameters():
+            #     print(name, param.data.norm())
         # Evaluate on test set
         model.eval()
+        
+        
+
 
         with torch.no_grad():
             for batch_idx, (data, draw_image, output_scale, filenames, ground_truth_keypoints, ground_truth_heatmaps, ground_truth_offsets) in enumerate(test_loader):
@@ -305,12 +343,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 # data, target = torch.Tensor(data).cuda(), torch.Tensor(target).cuda()
                 output = model(data_squeezed)
                 
-                print("**output[0] device: ", output[0].device)
-                print("**ground truth offsets device: ", ground_truth_offsets.device)
+                # print("**output[0] device: ", output[0].device)
+                # print("**ground truth offsets device: ", ground_truth_offsets.device)
 
 
                 
-                print("**output[0] shape: ", output[0].shape)
+                # print("**output[0] shape: ", output[0].shape)
                 
                 
                 #iterate through the batch size
@@ -324,8 +362,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     height = test_heatmaps.shape[1]
                     width = test_heatmaps.shape[2]
                     
-                    print("inside item_idx loop offsets shape: ", offsets.shape)
-                    print("item (heatmap) type: ", type(item))
+                    # print("inside item_idx loop offsets shape: ", offsets.shape)
+                    # print("item (heatmap) type: ", type(item))
                     
                     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = decode_pose_from_batch_item(epoch, test_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
 
@@ -336,34 +374,22 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
                     draw_coordinates_to_image_file(appended_text, test_image_path, output_dir, output_stride, scale_factor, pose_scores,keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
-                    ######## 
                     
-                    print("offsets shape: ", offsets.shape)
-                    print("ground_truth_offsets shape: ", ground_truth_offsets[item_idx].shape)
-                    print("pose_scores shape: ", pose_scores.shape)
-                    print("keypoint_scores shape: ", keypoint_scores.shape)
-                    print("keypoint_coords shape: ", keypoint_coords.shape)
-                    print("keypoint_coords shape: ", keypoint_coords.shape)
-                    
-                    # offsets = offsets.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
-                    
-                    # num_poses, num_keypoints, _ = keypoint_coords.shape
-                    print("decoded offsets shape: ", decoded_offsets.shape)
-                    print("ground truth offsets[item_idx] shape: ", ground_truth_offsets[item_idx].shape)
-
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
-                    print("decoded offsets device: ", decoded_offsets.device)
-                    print("ground truth offsets device: ", ground_truth_offsets[item_idx].device)
+                    # print("decoded offsets device: ", decoded_offsets.device)
+                    # print("ground truth offsets device: ", ground_truth_offsets[item_idx].device)
                     
                     keypoint_coords = torch.from_numpy(keypoint_coords)
                     keypoint_coords = keypoint_coords.to('cuda')
                     
-                    print("keypoint_coords device: ", keypoint_coords.device)
-                    print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
-                    test_loss += criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], test_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx]).item()
+                    # print("keypoint_coords device: ", keypoint_coords.device)
+                    # print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
+                    loss = criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], test_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx]).item()
+                    test_loss += loss
+                    print("inside batch loss value: ", loss)
                     
-            test_loss /= len(test_loader.dataset) * test_loader.batch_size
+            test_loss /= len(test_loader.dataset)
             test_loss_value = test_loss.item()
             print("test_loss_value: ", test_loss_value)
             print("step: ", step)
@@ -399,7 +425,8 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
         
     else:
         heatmaps = torch.tensor(heatmaps, requires_grad=is_train)
-
+        
+    print("---- in decode pose from batch item --- ") 
     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = posenet.decode_multi.decode_multiple_poses(
                 heatmaps,
                 offsets,
@@ -409,6 +436,8 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
                 max_pose_detections=10,
                 min_pose_score=score_threshold)
 
+    
+    # print("decoded offsets: ", decoded_offsets)
     
     # Find the indices of poses with scores above the threshold
     valid_indices = np.where(pose_scores >= score_threshold)[0]

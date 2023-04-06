@@ -117,7 +117,7 @@ def find_root(highest_scores, highest_score_indices):
     # print("highest_score_indices shape: ", highest_score_indices.shape)
     # print("highest_score_indices: ", highest_score_indices)
     root_id = torch.argmax(highest_scores).item()
-    print("root_id: ", root_id)
+    # print("root_id: ", root_id)
 
     root_score = highest_scores[root_id].item()
 

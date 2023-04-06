@@ -62,6 +62,7 @@ def decode_multiple_poses(
         scores, offsets, displacements_fwd, displacements_bwd, output_stride,
         max_pose_detections=10, score_threshold=0.5, nms_radius=20, min_pose_score=0.5):
 
+    print("---inside decode multi pose ---")
     # perform part scoring step on GPU as it's expensive
     # TODO determine how much more of this would be worth performing on the GPU
     part_scores, part_idx = build_part_with_score_torch(score_threshold, LOCAL_MAXIMUM_RADIUS, scores)
@@ -71,10 +72,10 @@ def decode_multiple_poses(
     scores = scores.cpu().numpy()
     height = scores.shape[1]
     width = scores.shape[2]
-    print("---inside decode pose ---")
-    print("before reshape offsets shape: ", offsets.shape)
+    # print("---inside decode pose ---")
+    # print("before reshape offsets shape: ", offsets.shape)
     # change dimensions from (x, h, w) to (x//2, h, w, 2) to allow return of complete coord array
-    print("after reshape offsets shape: ", offsets.shape)
+    # print("after reshape offsets shape: ", offsets.shape)
     
     displacements_fwd = displacements_fwd.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
     displacements_bwd = displacements_bwd.cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
@@ -91,7 +92,7 @@ def decode_multiple_poses(
 
     for root_score, (root_id, root_coord_y, root_coord_x) in zip(part_scores, part_idx):
         root_coord = np.array([root_coord_y, root_coord_x])
-        print("inside root_score offsets shape: ", overall_offsets.shape)
+        # print("inside root_score offsets shape: ", overall_offsets.shape)
 
         root_image_coords = root_coord * output_stride + overall_offsets[root_id, root_coord_y, root_coord_x]
 
@@ -103,7 +104,8 @@ def decode_multiple_poses(
             root_score, root_id, root_image_coords,
             scores, overall_offsets, output_stride,
             displacements_fwd, displacements_bwd)
-
+        
+        print("offsets: ", offsets)
         pose_score = get_instance_score_fast(
             pose_keypoint_coords[:pose_count, :, :], squared_nms_radius, keypoint_scores, keypoint_coords)
 

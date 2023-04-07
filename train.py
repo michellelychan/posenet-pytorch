@@ -87,6 +87,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         kernel_size = 2 * self.radius + 1
         mask = F.max_pool2d(mask, kernel_size, stride=1, padding=padding)
 
+        mask = mask.cuda()
+
         return mask
 
 
@@ -133,6 +135,10 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         print("mask shape: ", mask.shape)
         
         print("pred_offsets shape: ", pred_offsets.shape)
+        
+        print("ground_truth_offset_maps device: ", ground_truth_offset_maps.device)
+        print("pred_offsets device: ", pred_offsets.device)
+        print("mask device: ", mask.device)
         
         masked_true_offsets = ground_truth_offset_maps * mask
         
@@ -188,10 +194,11 @@ class MultiPersonHeatmapOffsetAggregationLossOld(nn.Module):
         # print("=== predicted offsets ===")
         diff = pred_offsets - target_offsets
         
-
+        
 
         zero_distances = torch.zeros_like(diff)
         offset_loss = self.smoothl1loss(diff, zero_distances).mean()
+        
         print("pred offsets: ", pred_offsets)
         print("target offsets: ", target_offsets)
         print("offset loss: ", offset_loss)
@@ -304,8 +311,8 @@ class PosenetDatasetImage(Dataset):
 
         
 def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale_factor=8):
-    ground_truth_keypoints = ground_truth_keypoints.cpu()
-    ground_truth_offset_maps = torch.zeros((NUM_KEYPOINTS, height, width, 2), dtype=torch.float32)
+    ground_truth_keypoints = ground_truth_keypoints.cuda()
+    ground_truth_offset_maps = torch.zeros((NUM_KEYPOINTS, height, width, 2), dtype=torch.float32).cuda()
     
     print("ground_truth_offset_maps shape: ", ground_truth_offset_maps)
     print("ground_truth_keypoints shape: : ", ground_truth_keypoints)
@@ -315,10 +322,10 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
             for j in range(width):
                 y_coord = i * scale_factor
                 x_coord = j * scale_factor
-                ground_truth_offset_maps[k, i, j] = ground_truth_keypoints[k] - torch.tensor([y_coord, x_coord])
+                ground_truth_offset_maps[k, i, j] = ground_truth_keypoints[k] - torch.tensor([y_coord, x_coord]).cuda()
 
     # reshaped_ground_truth_offset_maps = torch.cat([ground_truth_offset_maps[:, :, :, 0], ground_truth_offset_maps[:, :, :, 1]], dim=0)
-
+    
     return ground_truth_offset_maps
 
 
@@ -487,7 +494,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     # print("keypoint_coords device: ", keypoint_coords.device)
                     # print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
-                    loss = criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], test_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx]).item()
+                    loss = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx])
+
                     test_loss += loss
                     print("inside batch loss value: ", loss)
                     

@@ -18,6 +18,7 @@ import argparse
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import posenet
 import time
@@ -48,13 +49,113 @@ args = parser.parse_args()
 
 #Loss function with Hough Voting 
 
+# class MaskedBCEWithLogitsLoss(nn.Module):
+#     def __init__(self):
+#         super(MaskedBCEWithLogitsLoss, self).__init__()
+#         self.bce_with_logits_loss = nn.BCEWithLogitsLoss(reduction='none')
+
+#     def forward(self, input, target, mask):
+#         # Compute BCEWithLogitsLoss
+#         loss = self.bce_with_logits_loss(input, target)
+
+#         # Apply the mask
+#         masked_loss = loss * mask
+
+#         # Compute the mean loss over the masked elements
+#         # mean_loss = torch.sum(masked_loss) / torch.sum(mask)
+
+#         return masked_loss
+
 class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
-    def __init__(self, use_target_weight=False):
+    def __init__(self, radius=3, heatmap_weight=4.0, offset_weight=1.0, use_target_weight=False):
         super(MultiPersonHeatmapOffsetAggregationLoss, self).__init__()
         self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
+        self.radius = radius
+        self.heatmap_weight = heatmap_weight
+        self.offset_weight = offset_weight
+        self.use_target_weight = use_target_weight
+
+    import torch.nn.functional as F
+
+    def create_mask(self, ground_truth, threshold=0.1):
+        # Threshold the ground truth heatmaps to create a binary mask
+        mask = (ground_truth > threshold).float()
+
+        # Apply dilation to create a disk-like region around each keypoint
+        padding = self.radius
+        kernel_size = 2 * self.radius + 1
+        mask = F.max_pool2d(mask, kernel_size, stride=1, padding=padding)
+
+        return mask
 
 
+    def create_binary_target_heatmap(self, target_heatmaps, target_keypoints, radius=3):
+        binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+
+        for k in range(target_keypoints.shape[0]):
+            x, y = target_keypoints[k, 0], target_keypoints[k, 1]
+            if x != 0 or y != 0:
+                x, y = int(x.item()), int(y.item())
+                y_min, y_max = max(0, y - radius), min(binary_target_heatmaps.shape[1], y + radius + 1)
+                x_min, x_max = max(0, x - radius), min(binary_target_heatmaps.shape[2], x + radius + 1)
+
+                y_indices, x_indices = np.mgrid[y_min:y_max, x_min:x_max]
+                y_indices, x_indices = torch.tensor(y_indices), torch.tensor(x_indices)
+                distances = torch.sqrt((y_indices - y)**2 + (x_indices - x)**2)
+
+                binary_target_heatmaps[k, y_min:y_max, x_min:x_max] = (distances <= radius).float()
+
+        return binary_target_heatmaps
+
+
+
+    def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets):
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        # Heatmap loss
+        binary_target_heatmaps = self.create_binary_target_heatmap(target_heatmaps, target_keypoints, self.radius)
+
+        heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps)
+        print("heatmap loss: ", heatmap_loss)
+
+        # Offset loss
+        mask = self.create_mask(target_heatmaps)
+        mask = mask.unsqueeze(-1)
+        
+        pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
+
+        
+        #turn ground truth offsets from shape [17,2] to shape [17, 33, 33]
+        ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33)
+        print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
+        
+        print("mask shape: ", mask.shape)
+        
+        print("pred_offsets shape: ", pred_offsets.shape)
+        
+        masked_true_offsets = ground_truth_offset_maps * mask
+        
+        masked_pred_offsets = pred_offsets * mask
+        
+        offset_loss = self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
+        
+        print("pred offsets: ", pred_offsets)
+        print("target offsets: ", target_offsets)
+        print("offset loss: ", offset_loss)
+
+        # Total loss
+        loss = self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
+            
+        return loss
+    
+
+class MultiPersonHeatmapOffsetAggregationLossOld(nn.Module):
+    def __init__(self, use_target_weight=False):
+        super(MultiPersonHeatmapOffsetAggregationLoss, self).__init__()
+        self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
+        # self.masked_bce_loss = MaskedBCEWithLogitsLoss()
+        self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
         self.use_target_weight = use_target_weight
 
     def forward(self, score_threshold, pred_keypoints, target_keypoints, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
@@ -69,47 +170,25 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         """
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        # Detach the ground truth heatmaps and offsets
-#         target_heatmaps_detached = target_heatmaps.detach()
-        target_offsets_detached = target_offsets.detach()
-#         target_keypoints_detached = target_keypoints.detach()
+        target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
+
+        target_heatmaps_binarized = target_heatmaps_binarized.requires_grad_(True)
+
 
         
-        # # set requires_grad to True for pred_heatmaps, pred_offsets, and pred_keypoints
-        # target_heatmaps_detached.requires_grad_(True)
-        # target_offsets_detached.requires_grad_(True)
-        # target_keypoints_detached.requires_grad_(True)
-        
-        pred_heatmaps_sigmoid = torch.sigmoid(pred_heatmaps)
-        pred_heatmaps_binarized = torch.where(pred_heatmaps_sigmoid > score_threshold, torch.ones_like(pred_heatmaps_sigmoid), torch.zeros_like(pred_heatmaps_sigmoid))
-        target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
-        
-        # Custom BCE loss for binarized tensors while keeping the gradient flow for original tensors
-        heatmap_loss = torch.mean(-1 * (target_heatmaps_binarized * torch.log(pred_heatmaps_sigmoid + 1e-8) + (1 - target_heatmaps_binarized) * torch.log(1 - pred_heatmaps_sigmoid + 1e-8)))
+        pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
+        pred_heatmaps_binarized = pred_heatmaps_binarized.requires_grad_(True)
+
+        heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
         print("heatmap loss: ", heatmap_loss)
-#         pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
-#         target_heatmaps_binarized = torch.where(target_heatmaps_detached > score_threshold, torch.ones_like(target_heatmaps_detached), torch.zeros_like(target_heatmaps_detached))
-        
-#         heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
-        
-        # print("pred_heatmaps.requires_grad:", pred_heatmaps.requires_grad)
-        # print("pred_offsets.requires_grad:", pred_offsets.requires_grad)
-        
-        # Print the tensors to check their gradient status
-        #find the euclidean distance between the predicted and target offset vectors
-        #euclidean distance = sqrt((pred_x - target_x)^2 + (pred_y - target_y)^2)
-        # distances = torch.sqrt(torch.pow(pred_x - target_x, 2) + torch.pow(pred_y - target_y, 2))
-        #?? should I normalize the distances? 
+
+
         
         #compute the difference between the predicted offsets and the ground truth offsets
         # print("=== predicted offsets ===")
-        diff = pred_offsets - target_offsets_detached
+        diff = pred_offsets - target_offsets
         
-        # print('pred_offsets shape: ', pred_offsets.shape)
-        # print('target_offsets shape: ', target_offsets.shape)
-        # print('diff shape: ', diff.shape)
-        # distances = torch.norm(pred_keypoints - target_keypoints_detached, dim=1)
-        # print("distance shape: ", distances.shape)
+
 
         zero_distances = torch.zeros_like(diff)
         offset_loss = self.smoothl1loss(diff, zero_distances).mean()
@@ -224,7 +303,25 @@ class PosenetDatasetImage(Dataset):
             return input_image_tensor, draw_image, output_scale, filename
 
         
-        
+def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale_factor=8):
+    ground_truth_keypoints = ground_truth_keypoints.cpu()
+    ground_truth_offset_maps = torch.zeros((NUM_KEYPOINTS, height, width, 2), dtype=torch.float32)
+    
+    print("ground_truth_offset_maps shape: ", ground_truth_offset_maps)
+    print("ground_truth_keypoints shape: : ", ground_truth_keypoints)
+    
+    for k in range(NUM_KEYPOINTS):
+        for i in range(height):
+            for j in range(width):
+                y_coord = i * scale_factor
+                x_coord = j * scale_factor
+                ground_truth_offset_maps[k, i, j] = ground_truth_keypoints[k] - torch.tensor([y_coord, x_coord])
+
+    # reshaped_ground_truth_offset_maps = torch.cat([ground_truth_offset_maps[:, :, :, 0], ground_truth_offset_maps[:, :, :, 1]], dim=0)
+
+    return ground_truth_offset_maps
+
+
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True):
     step = 0
     score_threshold = 0.25
@@ -305,16 +402,21 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print("decoded_offsets shape: ", decoded_offsets.shape)
 
                     keypoint_coords = torch.from_numpy(keypoint_coords)
-                    keypoint_coords = keypoint_coords.to('cuda')                
+                    keypoint_coords = keypoint_coords.to('cuda')           
                     
-                    loss = criterion(score_threshold, keypoint_coords, ground_truth_keypoints[item_idx], train_heatmaps, ground_truth_heatmaps[item_idx], decoded_offsets, ground_truth_offsets[item_idx])
-            
+                    print("offsets shape: ", offsets.shape)
+                    
+                    loss = criterion(train_heatmaps, ground_truth_heatmaps[item_idx] , ground_truth_keypoints[item_idx],  offsets, ground_truth_offsets[item_idx])
+
                     # Backward pass
                     optimizer.zero_grad()
                     
+                    print("loss shape: ", loss.shape)
+
+                    print("loss: ", loss)
 
                     print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
-                          .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.item()))
+                          .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.mean().item()))
                     
                     running_loss_value += loss.item()
                     batch_loss += loss

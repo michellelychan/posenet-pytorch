@@ -65,7 +65,15 @@ def decode_multiple_poses(
     print("---inside decode multi pose ---")
     # perform part scoring step on GPU as it's expensive
     # TODO determine how much more of this would be worth performing on the GPU
+    print("score_threshold: ", score_threshold)
+    print("local max radius: ", LOCAL_MAXIMUM_RADIUS)
+    # print("heatmaps (scores): ", scores)
+    print("scores shape: ", scores.shape)
+    print("displacements shape: ", displacements_fwd.shape)
+    print("offsets shape: ", offsets.shape)
     part_scores, part_idx = build_part_with_score_torch(score_threshold, LOCAL_MAXIMUM_RADIUS, scores)
+    # print("part_scores after built_part_score: ", part_scores)
+    # print("part_idx: ", part_idx)
     part_scores = part_scores.cpu().numpy()
     part_idx = part_idx.cpu().numpy()
 
@@ -89,8 +97,11 @@ def decode_multiple_poses(
 
     #offets in shape [max_pose_detections, 17, 2] instead of [17, 33, 33, 2] 
     pose_offsets = np.zeros((max_pose_detections, NUM_KEYPOINTS, 2))
+    # print("part_scores: ", part_scores)
+    # print("part_idx: ", part_idx)
 
     for root_score, (root_id, root_coord_y, root_coord_x) in zip(part_scores, part_idx):
+        # print("inside loop")
         root_coord = np.array([root_coord_y, root_coord_x])
         # print("inside root_score offsets shape: ", overall_offsets.shape)
 
@@ -105,7 +116,7 @@ def decode_multiple_poses(
             scores, overall_offsets, output_stride,
             displacements_fwd, displacements_bwd)
         
-        print("offsets: ", offsets)
+        
         pose_score = get_instance_score_fast(
             pose_keypoint_coords[:pose_count, :, :], squared_nms_radius, keypoint_scores, keypoint_coords)
 
@@ -118,9 +129,16 @@ def decode_multiple_poses(
             pose_keypoint_scores[pose_count, :] = keypoint_scores
             pose_keypoint_coords[pose_count, :, :] = keypoint_coords
             pose_offsets[pose_count, :, :] = offsets
+            # print("offsets: ", offsets)
             pose_count += 1
 
         if pose_count >= max_pose_detections:
             break
+            
+        print("-after decoding-")
+        print("pose_scores shape: ", pose_scores.shape)
+        print("pose_keypoint_scores shape: ", pose_keypoint_scores.shape)
+        print("pose_keypoint_coords shape: ", pose_keypoint_coords.shape)
+        print("pose_offsets shape: ", pose_offsets.shape)
 
     return pose_scores, pose_keypoint_scores, pose_keypoint_coords, pose_offsets

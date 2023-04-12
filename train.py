@@ -23,6 +23,7 @@ from torch.utils.data import Dataset, DataLoader
 import posenet
 import time
 from torchvision import transforms
+import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
 from ground_truth import *
 from posenet.decode_multi import *
@@ -88,7 +89,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         mask = F.max_pool2d(mask, kernel_size, stride=1, padding=padding)
 
         mask = mask.cuda()
-
+        
         return mask
 
 
@@ -126,16 +127,13 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         mask = mask.unsqueeze(-1)
         
         pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
-
         
         #turn ground truth offsets from shape [17,2] to shape [17, 33, 33]
         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33)
         print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
         
         print("mask shape: ", mask.shape)
-        
         print("pred_offsets shape: ", pred_offsets.shape)
-        
         print("ground_truth_offset_maps device: ", ground_truth_offset_maps.device)
         print("pred_offsets device: ", pred_offsets.device)
         print("mask device: ", mask.device)
@@ -179,15 +177,12 @@ class MultiPersonHeatmapOffsetAggregationLossOld(nn.Module):
         target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
 
         target_heatmaps_binarized = target_heatmaps_binarized.requires_grad_(True)
-
-
         
         pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
         pred_heatmaps_binarized = pred_heatmaps_binarized.requires_grad_(True)
 
         heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
         print("heatmap loss: ", heatmap_loss)
-
 
         
         #compute the difference between the predicted offsets and the ground truth offsets
@@ -232,12 +227,11 @@ class PosenetDatasetImage(Dataset):
             print("PosenetDatasetImage filenames: ", self.filenames)
         else:
             self.is_ground_truth = False
-        
+
         
         self.data = [f.path for f in os.scandir(file_path) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
         self.filenames = [os.path.basename(file_path) for file_path in self.data]
 
-                
         if  self.train:
             self.transforms = transforms.Compose([
                 #not mandatory - at first don't apply augmentation first before applying 
@@ -252,7 +246,7 @@ class PosenetDatasetImage(Dataset):
                 #mean value of the pixels of each channel [r, g, b]
                 #std value of the pixels of each channel [r, g, b]
                 
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                transforms.Normalize(mean=[5.4476, 8.3573, 7.5377], std=[3.6566, 3.5510, 4.0362])
             ])
             
             if ground_truth_keypoints_dir:
@@ -264,7 +258,7 @@ class PosenetDatasetImage(Dataset):
             self.transforms = transforms.Compose([
                 transforms.Resize((256, 256)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                transforms.Normalize(mean=[5.4476, 8.3573, 7.5377], std=[3.6566, 3.5510, 4.0362])
             ])
 
 
@@ -308,6 +302,29 @@ class PosenetDatasetImage(Dataset):
                 
         else:
             return input_image_tensor, draw_image, output_scale, filename
+
+def get_dataset_mean_std(dataset):
+    # Calculate the mean and standard deviation for each channel
+    mean = torch.zeros(3)
+    std = torch.zeros(3)
+    
+    for i, (input_image_tensor, draw_image, _, _, _, _, _) in enumerate(dataset):
+        print("number of outputs of dataset: ", len(next(iter(dataset))))
+        print("draw_image type: ", type(draw_image))
+        print("draw_image shape: ", draw_image.shape)
+        
+        mean = torch.zeros(3)
+        std = torch.zeros(3)
+        for i in range(3):
+            mean[i] = draw_image[..., i].mean()
+            std[i] = draw_image[..., i].std()
+
+    mean /= len(dataset)
+    std /= len(dataset)
+    print(f'mean: {mean}')
+    print(f'std: {std}')
+    
+    return mean, std
 
         
 def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale_factor=8):
@@ -494,8 +511,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     # print("keypoint_coords device: ", keypoint_coords.device)
                     # print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
-                    loss = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx])
-
+                    loss = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx]).item()
+                    
+                    
                     test_loss += loss
                     print("inside batch loss value: ", loss)
                     
@@ -613,11 +631,17 @@ def main():
         train_dataset = PosenetDatasetImage(train_image_path, ground_truth_keypoints_dir, scale_factor=1.0, output_stride=output_stride, train=True)
         test_dataset = PosenetDatasetImage(test_image_path, ground_truth_keypoints_dir, scale_factor=1.0, output_stride=output_stride, train=True)
         
-        # test_dataset = PosenetDatasetImage(test_image_path, scale_factor=1.0, output_stride=output_stride, train=True)
+        # when you have updated your dataset, print the mean and std and 
+        # replace the Dataset normalization transforms  in class PosenetDatasetImage(Dataset) 
+        # mean, std = get_dataset_mean_std(train_dataset)
+
+        
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
+        
+        
         train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, train_image_path, output_dir, scale_factor, is_train)
 
         print('Setting up...')

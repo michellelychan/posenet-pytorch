@@ -4,6 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 from scipy.stats import multivariate_normal
+from skimage.morphology import dilation, disk
 import torch
 
 def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatmaps_dir="heatmaps", heatmap_shape=[33,33], keypoints_updated_dir="keypoints_updated"):

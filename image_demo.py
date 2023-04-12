@@ -5,12 +5,14 @@ import os
 import torch
 
 import posenet
+from posenet.decode_multi import *
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=int, default=101)
 parser.add_argument('--scale_factor', type=float, default=1.0)
 parser.add_argument('--notxt', action='store_true')
-parser.add_argument('--image_dir', type=str, default='./images')
+parser.add_argument('--image_dir', type=str, default='./images_train')
 parser.add_argument('--output_dir', type=str, default='./output')
 args = parser.parse_args()
 
@@ -36,8 +38,7 @@ def main():
             input_image = torch.Tensor(input_image).cuda()
 
             heatmaps_result, offsets_result, displacement_fwd_result, displacement_bwd_result = model(input_image)
-
-            pose_scores, keypoint_scores, keypoint_coords = posenet.decode_multiple_poses(
+            pose_scores, keypoint_scores, keypoint_coords, pose_offsets = posenet.decode_multi.decode_multiple_poses(
                 heatmaps_result.squeeze(0),
                 offsets_result.squeeze(0),
                 displacement_fwd_result.squeeze(0),

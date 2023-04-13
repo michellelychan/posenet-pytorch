@@ -131,6 +131,8 @@ def decode_multiple_poses(
             pose_offsets[pose_count, :, :] = offsets
             # print("offsets: ", offsets)
             pose_count += 1
+            
+        
 
         if pose_count >= max_pose_detections:
             break
@@ -140,5 +142,6 @@ def decode_multiple_poses(
         print("pose_keypoint_scores shape: ", pose_keypoint_scores.shape)
         print("pose_keypoint_coords shape: ", pose_keypoint_coords.shape)
         print("pose_offsets shape: ", pose_offsets.shape)
+        print("pose_count: ", pose_count)
 
     return pose_scores, pose_keypoint_scores, pose_keypoint_coords, pose_offsets

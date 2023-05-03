@@ -119,12 +119,6 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
 
         return binary_target_heatmaps
 
-    def aggregate_ground_truth_heatmaps(self, ground_truth_heatmaps):
-        #TODO : find num_people per ground truth heatmaps 
-        num_people = 15
-        aggregated_heatmaps = ground_truth_heatmaps.sum(dim=0) / num_people
-        return aggregated_heatmaps
-
     def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
@@ -136,51 +130,61 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         
         #TODO update num_people logic
         num_people = 15
-        
-        for pose in range(max_num_poses):
+        heatmap_loss = torch.tensor(0.0)
+
+        for pose in range(num_people):
             binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
-            
+            pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps)
+
             print("pred_heatmaps shape: ", pred_heatmaps.shape)
             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
             print("target_heatmaps shape: ", target_heatmaps.shape)
             
-            # Offset loss
-            mask = self.create_mask(target_heatmaps[pose])
-            mask = mask.unsqueeze(-1)
-            
+            heatmap_loss += pose_heatmap_loss
+        
+        heatmap_loss /= num_people
+        
+        
+        # Offset loss
+        mask = self.create_mask(target_heatmaps[pose])
+        mask = mask.unsqueeze(-1)
+        
+        go_forward = False
+        offset_loss = torch.tensor(0.02)
+        
+        if go_forward: 
             pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
             print("pred_offsets shape: ", pred_offsets.shape)
-            
+                
             #turn ground truth offsets from shape [17,2] to shape [17, 33, 33]
             ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33)
             print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
-
+    
             print("mask shape: ", mask.shape)
             print("pred_offsets shape: ", pred_offsets.shape)
             print("ground_truth_offset_maps device: ", ground_truth_offset_maps.device)
             print("pred_offsets device: ", pred_offsets.device)
             print("mask device: ", mask.device)
-        
+            
             masked_true_offsets = ground_truth_offset_maps * mask
-        
+            
             masked_pred_offsets = pred_offsets * mask
-        
+            
             offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
-        
-
-        offset_loss = offset_loss / num_people
-        
-        aggregated_gt_heatmaps = self.aggregate_ground_truth_heatmaps(binary_target_heatmaps)
-        print("aggregated_gt_heatmaps shape: ", aggregated_gt_heatmaps.shape)
-        print("binary target_heatmaps shape: ", binary_target_heatmaps.shape)
-        print("pred_heatmaps shape: ", pred_heatmaps.shape)
-        
-        heatmap_loss = self.bceloss(aggregated_gt_heatmaps, pred_heatmaps)
-        print("heatmap loss: ", heatmap_loss)
-        
-        # print("pred offsets: ", pred_offsets)
-        # print("target offsets: ", target_offsets)
-        print("offset loss: ", offset_loss)
+            
+    
+            offset_loss = offset_loss / num_people
+            
+            aggregated_gt_heatmaps = self.aggregate_ground_truth_heatmaps(binary_target_heatmaps)
+            print("aggregated_gt_heatmaps shape: ", aggregated_gt_heatmaps.shape)
+            print("binary target_heatmaps shape: ", binary_target_heatmaps.shape)
+            print("pred_heatmaps shape: ", pred_heatmaps.shape)
+            
+            print("heatmap loss: ", heatmap_loss)
+            
+            # print("pred offsets: ", pred_offsets)
+            # print("target offsets: ", target_offsets)
+            print("offset loss: ", offset_loss)
 
         loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
             

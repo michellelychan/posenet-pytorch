@@ -10,14 +10,19 @@ matplotlib.use('Agg')
 
 
 
-def print_heatmap(heatmap):
+def print_heatmap(heatmap, image_name=""):
     #print heatmap for each image
     os.makedirs('heatmaps', exist_ok=True)
     
     #loop through the 15 images 
     for i in range(heatmap.shape[0]):
         # Create a new directory for this image
-        os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
+        if image_path:
+            os.makedirs(f'heatmaps/{image_name}', exist_ok=True)
+            folder_name = image_name
+        else:
+            os.makedirs(f'heatmaps/image_{i}', exist_ok=True)
+            folder_name = image_ + i
         
         #loop through each joint 
         for j in range(heatmap.shape[1]):
@@ -29,7 +34,7 @@ def print_heatmap(heatmap):
             plt.colorbar()
             
             # Save the heatmap in the corresponding image folder
-            plt.savefig(f'./heatmaps/image_{i}/joint_{j}_heatmap.png')
+            plt.savefig(f'./heatmaps/{folder_name}/joint_{j}_heatmap.png')
             
             # Clear the plot
             plt.clf()
@@ -37,10 +42,10 @@ def print_heatmap(heatmap):
 
 def draw_coordinates_to_image_file(appended_text, image_path, output_dir, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filename, displacements_fwd=None, displacements_bwd=None, include_displacements=False):
     
-    print("------- inside draw_coordinates_to_image_file")
-    print("appended_text: ", appended_text)
-    print("image_path: ", image_path)
-    print("output_dir: ", output_dir)
+#     print("------- inside draw_coordinates_to_image_file")
+#     print("appended_text: ", appended_text)
+#     print("image_path: ", image_path)
+#     print("output_dir: ", output_dir)
     
     input_image, draw_image, output_scale = posenet.read_imgfile(
         os.path.join(image_path, filename), scale_factor, output_stride=output_stride)
@@ -119,12 +124,12 @@ def draw_coordinates_to_image_file(appended_text, image_path, output_dir, output
 
     # Draw the keypoints and skeleton on the draw_image
     abs_output_dir = os.path.abspath(output_dir)
-    print("Absolute output_dir: ", abs_output_dir)
+    # print("Absolute output_dir: ", abs_output_dir)
     
     # Update image_path to include epoch number
     image_filename = f"{appended_text}_{filename}"
     # Get the absolute path of the saved image file
-    print("image_filename: ", image_filename)
+    # print("image_filename: ", image_filename)
     cv2.imwrite(os.path.join(output_dir, image_filename), draw_image)
     
 
@@ -133,8 +138,8 @@ def draw_displacement_vectors(image, keypoints, displacements, output_stride, sc
     fig, ax = plt.subplots()
     ax.imshow(image)
     
-    print("inside draw_displacement_vectors ====")
-    print("displacements shape: ", displacements.shape)
+    # print("inside draw_displacement_vectors ====")
+    # print("displacements shape: ", displacements.shape)
     
     for edge_id, (source_keypoint_id, target_keypoint_id) in enumerate(PARENT_CHILD_TUPLES):
         if source_keypoint_id < keypoints.shape[0] and target_keypoint_id < keypoints.shape[0]:

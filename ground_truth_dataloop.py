@@ -56,32 +56,52 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
             os.makedirs(image_dir)
         
         # load the original keypoints
+        # keypoints scaled to heatmap shape [33, 33]
+        # keypoints shape [num_poses, 17, 2]
         keypoints = keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape)
-        
-        print("----keypoints----")
-        print(keypoints)
+
         
 #         original_keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_keypoints.txt")
 #         np.savetxt(original_keypoints_file, keypoints, delimiter=",")
         
         # create the heatmaps from the original keypoints
+        # heatmaps of shape [num_poses, 17, 33,33] 
         heatmaps = load_keypoints(keypoints, num_keypoints, heatmap_shape)
         
+        num_poses = heatmaps.shape[0]
+        
         # generate the keypoints from the heatmaps
+        # generated_keypoints are scaled to heatmap shape size [33,33]
+        # generated_keypoints shape [num_poses, 17, 2]
         generated_keypoints = generated_keypoints_from_heatmaps(heatmaps) 
-        generated_keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_generated.txt")
-        np.savetxt(generated_keypoints_file, generated_keypoints, delimiter=",")
         
-#         print("HEATMAPS SHAPE")
-#         print(heatmaps.shape)
-        
-        
-#         keypoints = torch.from_numpy(keypoints)
-#         # create the ground truch offset vectors
-#         offset_vectors = generate_offset_vectors(keypoints, generated_keypoints)
+        # combine keypoints and generated keypoints from all poses into a single array
+        all_keypoints = np.concatenate(keypoints, axis=0)
+        all_generated_keypoints = np.concatenate(list(generated_keypoints), axis=0)
 
-#         save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir)
-#         save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
+        #save the keypoints
+        #keypoints of all poses are saved in the same .txt file in chronological order
+        #the number of rows / 17 is the number of poses
+        keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_keypoints.txt")
+        np.savetxt(keypoints_file, all_keypoints, delimiter=",")
+            
+        #save generated keypoints
+        #keypoints of all poses are saved in the same .txt file in chronological order
+        #the number of rows / 17 is the number of poses 
+        generated_keypoints_file = os.path.join(image_dir, os.path.splitext(image_file)[0] + "_generated.txt")
+        np.savetxt(generated_keypoints_file, all_generated_keypoints, delimiter=",")
+
+        
+        keypoints = torch.from_numpy(keypoints)
+        
+        # create the ground truch offset vectors
+        offset_vectors = generate_offset_vectors(keypoints, generated_keypoints)
+        
+        for pose_idx in range(num_poses):
+            save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, heatmaps_dir)
+            save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir)
+            
+        # save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
         
         
 def generate_offset_vectors(keypoints, generated_keypoints):
@@ -120,53 +140,52 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
 #create generated keypoints from heatmaps
 # generated keypoints are created by running a sigmoid function on the heatmap and then argmax to find the x and y coordinates 
 def generated_keypoints_from_heatmaps(heatmaps):
-    height = heatmaps.shape[2]
-    width = heatmaps.shape[3]
-                
+    num_poses, num_keypoints, height, width = heatmaps.shape
+
     # find the index of the maximum value along the last two dimensions
     heatmaps = torch.from_numpy(heatmaps)
     heatmaps = torch.sigmoid(heatmaps)
-        
-    max_idxs = heatmaps.view(17, 1, -1).argmax(dim=-1)
-    max_y = torch.div(max_idxs, width, rounding_mode='floor')
-    max_x = max_idxs % width
-        
-    generated_keypoints = torch.cat([max_x, max_y], dim=1)
 
+    max_idxs = heatmaps.view(num_poses, num_keypoints, -1).argmax(dim=-1)
+    max_y = torch.div(max_idxs, height, rounding_mode='floor')
+    max_x = max_idxs % width
+
+    generated_keypoints = torch.cat([max_x.unsqueeze(-1), max_y.unsqueeze(-1)], dim=-1)
+    # print("--generated keypoints --")
+    # print("generated keypoints shape: ", generated_keypoints.shape)
+    # print(generated_keypoints)
+    
     return generated_keypoints
 
-def save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir):
+    
+def save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, heatmaps_dir):
     output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
-    offset_vectors_file = os.path.join(output_dir, os.path.splitext(image_file)[0] + "_offset_vectors.txt")
-    #print("=== OFFSET VECTORS FILE ===")
-    #print(offset_vectors_file)
-    pose_offset_vectors = np.expand_dims(offset_vectors, axis=0)
-    np.savetxt(offset_vectors_file, offset_vectors, fmt="%f", delimiter=",")
+    offset_vectors_file = os.path.join(output_dir, os.path.splitext(image_file)[0] + f"_offset_vectors_pose_{pose_idx}.txt")
+    np.savetxt(offset_vectors_file, offset_vectors[pose_idx], fmt="%f", delimiter=",")
+
         
-def save_heatmaps(heatmaps, image_file, num_keypoints, heatmaps_dir="heatmaps"):
+import matplotlib.pyplot as plt
+
+def save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir="heatmaps"):
     # create a folder for the heatmaps of this image
-    output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
+    output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0], f"pose_{pose_idx}")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'npy'), exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'png'), exist_ok=True)
     
-    # save the heatmaps in a single txt file
-    heatmaps_file = os.path.join(output_dir, os.path.splitext(image_file)[0] + "_heatmap.txt")
-    np.savetxt(heatmaps_file, heatmaps.reshape(num_keypoints, -1), fmt="%f", delimiter=",")
-    
-
-    # save the heatmaps to separate files in the output folder
     for i in range(num_keypoints):
         output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
         output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
-        np.save(output_file, heatmaps[i])
-        plt.imshow(heatmaps[i], cmap='hot', interpolation='nearest')
+        
+        np.save(output_file, heatmaps[pose_idx][i])
+        plt.imshow(heatmaps[pose_idx][i], cmap='hot', interpolation='nearest')
         plt.colorbar()
         plt.savefig(output_image)
         plt.clf()
-              
+        
 
 # load the keypoints from the image file
+# input: keypoints shape [n, 17, 2]
 def load_keypoints(keypoints, num_keypoints, heatmap_shape):
     all_heatmaps = []
     
@@ -238,8 +257,8 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
                 keypoints_final[i, j] = keypoint
             
         print("file name: ", f)
-        print("keypoints_final: ")
-        print(keypoints_final) 
+        # print("keypoints_final: ")
+        # print(keypoints_final) 
         print("keypoints_final shape: ", keypoints_final.shape)
             
         return keypoints_final
@@ -286,12 +305,23 @@ def load_ground_truth_data(image_file_names, keypoints_updated_dir):
 
     for image_file_name in image_file_names:
         image_file_dir = os.path.join(keypoints_updated_dir, image_file_name)
+        pose_keypoints_list = []
+              
         keypoints_file = os.path.join(image_file_dir, image_file_name + "_keypoints.txt")
         print("load ground truth keypoints_file", keypoints_file)
         generated_keypoints_file = os.path.join(image_file_dir, image_file_name + "_generated.txt")
         print("load ground truth generated_keypoints file", generated_keypoints_file)
-        keypoints = np.loadtxt(keypoints_file, delimiter=",")
-        generated_keypoints = np.loadtxt(generated_keypoints_file, delimiter=",")
+        
+        # Load the flattened keypoints
+        keypoints_flat = np.loadtxt(keypoints_file, delimiter=",")
+        generated_keypoints_flat = np.loadtxt(generated_keypoints_file, delimiter=",")
+
+        # Determine the number of poses based on the number of rows in the flattened keypoints
+        num_poses = int(keypoints_flat.shape[0] / 17)
+        
+        # Reshape the keypoints and generated keypoints arrays to have the correct dimensions
+        keypoints = keypoints_flat.reshape(num_poses, 17, 2)
+        generated_keypoints = generated_keypoints_flat.reshape(num_poses, 17, 2)
 
         # Generate the heatmaps from the keypoints
         heatmaps = load_keypoints(keypoints, num_keypoints=17, heatmap_shape=(33, 33))
@@ -299,11 +329,40 @@ def load_ground_truth_data(image_file_names, keypoints_updated_dir):
         keypoints_list.append(keypoints)
         heatmaps_list.append(heatmaps)
         offset_vectors_list.append(generate_offset_vectors(keypoints, generated_keypoints))
-        print("keypoints_list length: ", len(keypoints_list))
-        print("heatmaps_list length: ", len(heatmaps_list))
-        print("offset_vectors length: ", len(offset_vectors_list))
+    
+    print("--type--")
+    print("heatmaps list len: ", len(heatmaps_list))
+    print("heatmaps list [0] shape: ", heatmaps_list[0].shape)
+    print("offset vectors list shape: ", offset_vectors_list[0].shape)
+    
+    # keypoints_list = [np.array(keypoints, dtype=np.float32) for keypoints in keypoints_list]
+    # heatmaps_list = [np.array(heatmaps, dtype=np.float32) for heatmaps in heatmaps_list]
+    # offset_vectors_list = [np.array(offset_vectors, dtype=np.float32) for offset_vectors in offset_vectors_list]
+    
+    num_images = len(keypoints_list)
+    keypoints_padded = np.full((num_images, 15, 17, 2), -1)
+    heatmaps_padded = np.full((num_images, 15, 17, 33, 33), -1)
+    offset_vectors_padded = np.full((num_images, 15, 17, 2), -1)
+    
+    for image in range(num_images): 
+        num_poses = keypoints_list[image].shape[0]
+        keypoints_padded[image, :num_poses, :, :] = keypoints_list[image]
+        heatmaps_padded[image, :num_poses, :, :] = heatmaps_list[image]
+        offset_vectors_padded[image, :num_poses, :, :] = offset_vectors_list[image]
+        
+    
+    keypoints_padded = torch.from_numpy(keypoints_padded).cuda()
+    
+    heatmaps_padded = torch.from_numpy(heatmaps_padded).cuda()
+    offset_vectors_padded = torch.from_numpy(offset_vectors_padded).cuda()
+    
+    
+    print("keypoints_list shape: ", keypoints_padded.shape)
+    print("heatmaps_list shape: ", heatmaps_padded.shape)
+    print("offset_vectors shape: ", offset_vectors_padded.shape)
 
-    return keypoints_list, heatmaps_list, offset_vectors_list
+    return keypoints_padded, heatmaps_padded, offset_vectors_padded
+
 
 def image_file_name(file):
     return os.path.splitext(os.path.basename(file))[0]

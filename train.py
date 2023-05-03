@@ -25,7 +25,7 @@ import time
 from torchvision import transforms
 import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
-from ground_truth import *
+from ground_truth_dataloop import *
 from posenet.decode_multi import *
 from visualizers import *
 from scipy.optimize import linear_sum_assignment
@@ -76,6 +76,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         self.heatmap_weight = heatmap_weight
         self.offset_weight = offset_weight
         self.use_target_weight = use_target_weight
+        
 
     import torch.nn.functional as F
 
@@ -94,11 +95,18 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
 
 
     def create_binary_target_heatmap(self, target_heatmaps, target_keypoints, radius=3):
+        #TODO: check if binary target heatmaps is in the right shape and if it should be zeros_like
         binary_target_heatmaps = torch.zeros_like(target_heatmaps)
 
+#         print("target_heatmaps shape: ", target_heatmaps.shape)
+#         print("target_keypoints shape: ", target_keypoints.shape)
+              
         for k in range(target_keypoints.shape[0]):
+
             x, y = target_keypoints[k, 0], target_keypoints[k, 1]
-            if x != 0 or y != 0:
+            # print("x: ", x)
+            # print("y: ", y)
+            if (x != 0 and x != -1) or (y != 0 and y != -1):
                 x, y = int(x.item()), int(y.item())
                 y_min, y_max = max(0, y - radius), min(binary_target_heatmaps.shape[1], y + radius + 1)
                 x_min, x_max = max(0, x - radius), min(binary_target_heatmaps.shape[2], x + radius + 1)
@@ -111,15 +119,34 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
 
         return binary_target_heatmaps
 
-
+    def aggregate_ground_truth_heatmaps(self, ground_truth_heatmaps):
+        #TODO : find num_people per ground truth heatmaps 
+        num_people = 15
+        aggregated_heatmaps = ground_truth_heatmaps.sum(dim=0) / num_people
+        return aggregated_heatmaps
 
     def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+        
+        binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+        
         # Heatmap loss
-        binary_target_heatmaps = self.create_binary_target_heatmap(target_heatmaps, target_keypoints, self.radius)
-
-        heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps)
+        max_num_poses = 15
+        loss = 0.0
+        
+        
+        for pose in range(max_num_poses):
+            binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
+            
+            print("pred_heatmaps shape: ", pred_heatmaps.shape)
+            print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
+            
+        aggregated_gt_heatmaps = self.aggregate_ground_truth_heatmaps(binary_target_heatmaps)
+        print("aggregated_gt_heatmaps shape: ", aggregated_gt_heatmaps.shape)
+        print("binary target_heatmaps shape: ", binary_target_heatmaps.shape)
+        print("pred_heatmaps shape: ", pred_heatmaps.shape)
+        
+        heatmap_loss = self.bceloss(aggregated_gt_heatmaps, pred_heatmaps)
         print("heatmap loss: ", heatmap_loss)
 
         # Offset loss
@@ -131,7 +158,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         #turn ground truth offsets from shape [17,2] to shape [17, 33, 33]
         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33)
         print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
-        
+
         print("mask shape: ", mask.shape)
         print("pred_offsets shape: ", pred_offsets.shape)
         print("ground_truth_offset_maps device: ", ground_truth_offset_maps.device)
@@ -144,66 +171,12 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         
         offset_loss = self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
         
-        print("pred offsets: ", pred_offsets)
-        print("target offsets: ", target_offsets)
+        # print("pred offsets: ", pred_offsets)
+        # print("target offsets: ", target_offsets)
         print("offset loss: ", offset_loss)
 
-        # Total loss
-        loss = self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
+        loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
             
-        return loss
-    
-
-class MultiPersonHeatmapOffsetAggregationLossOld(nn.Module):
-    def __init__(self, use_target_weight=False):
-        super(MultiPersonHeatmapOffsetAggregationLoss, self).__init__()
-        self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
-        # self.masked_bce_loss = MaskedBCEWithLogitsLoss()
-        self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
-        self.use_target_weight = use_target_weight
-
-    def forward(self, score_threshold, pred_keypoints, target_keypoints, pred_heatmaps, target_heatmaps, pred_offsets, target_offsets):
-        """
-        Compute the heatmap offset aggregation loss with Hough voting
-        Reference from paper Towards Accurate Multi-person Pose Estimation in the Wild
-        :param pred_heatmaps: predicted heatmaps of shape 
-        :param target_heatmaps: target heatmaps of shape (num_joints, height, width)
-        :param pred_offsets: predicted offsets of shape (num_joints*2, height, width)
-        :param target_offsets: target offsets of shape (num_joints*2, height, width)
-        :return: loss value
-        """
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        target_heatmaps_binarized = torch.where(target_heatmaps > score_threshold, torch.ones_like(target_heatmaps), torch.zeros_like(target_heatmaps))
-
-        target_heatmaps_binarized = target_heatmaps_binarized.requires_grad_(True)
-        
-        pred_heatmaps_binarized = torch.where(pred_heatmaps > score_threshold, torch.ones_like(pred_heatmaps), torch.zeros_like(pred_heatmaps))
-        pred_heatmaps_binarized = pred_heatmaps_binarized.requires_grad_(True)
-
-        heatmap_loss = self.bceloss(pred_heatmaps_binarized, target_heatmaps_binarized)
-        print("heatmap loss: ", heatmap_loss)
-
-        
-        #compute the difference between the predicted offsets and the ground truth offsets
-        # print("=== predicted offsets ===")
-        diff = pred_offsets - target_offsets
-        
-        
-
-        zero_distances = torch.zeros_like(diff)
-        offset_loss = self.smoothl1loss(diff, zero_distances).mean()
-        
-        print("pred offsets: ", pred_offsets)
-        print("target offsets: ", target_offsets)
-        print("offset loss: ", offset_loss)
-
-        # print("heatmap loss: ", heatmap_loss)
-
-        #print the value of the offset loss
-        # print("offset loss: ", offset_loss)
-        loss = 4 * heatmap_loss + offset_loss
-        # print("loss: ", loss)
         return loss
 
 
@@ -219,9 +192,14 @@ class PosenetDatasetImage(Dataset):
         if ground_truth_keypoints_dir:
             image_file_names = [os.path.splitext(file)[0] for file in self.filenames if file.endswith((".jpg", ".png"))]
             self.keypoints, self.heatmaps, self.offset_vectors = load_ground_truth_data(image_file_names, self.ground_truth_keypoints_dir)
-            self.keypoints = torch.Tensor(self.keypoints).cuda()
-            self.heatmaps = torch.Tensor(self.heatmaps).cuda()
-            self.offset_vectors = torch.Tensor(self.offset_vectors).cuda()
+            print("--inside dataset class init --")
+            print("keypoints shape: ", self.keypoints.shape)
+            print("heatmaps shape: ", self.heatmaps.shape)
+            print("offest_vectors shape: ", self.offset_vectors.shape)
+            # self.keypoints = torch.Tensor(self.keypoints).cuda()
+            # self.heatmaps = torch.Tensor(self.heatmaps).cuda()
+            # self.offset_vectors = torch.Tensor(self.offset_vectors).cuda()
+            
             
             self.is_ground_truth = True
             print("PosenetDatasetImage filenames: ", self.filenames)
@@ -294,9 +272,9 @@ class PosenetDatasetImage(Dataset):
         if self.is_ground_truth:
             # print("print length of keypoints: ", len(self.keypoints))
             keypoints = self.keypoints[idx]
-
             heatmaps = self.heatmaps[idx]
             offset_vectors = self.offset_vectors[idx]
+            
             
             return input_image_tensor, draw_image, output_scale, filename, keypoints, heatmaps, offset_vectors
                 
@@ -309,9 +287,9 @@ def get_dataset_mean_std(dataset):
     std = torch.zeros(3)
     
     for i, (input_image_tensor, draw_image, _, _, _, _, _) in enumerate(dataset):
-        print("number of outputs of dataset: ", len(next(iter(dataset))))
-        print("draw_image type: ", type(draw_image))
-        print("draw_image shape: ", draw_image.shape)
+        # print("number of outputs of dataset: ", len(next(iter(dataset))))
+        # print("draw_image type: ", type(draw_image))
+        # print("draw_image shape: ", draw_image.shape)
         
         mean = torch.zeros(3)
         std = torch.zeros(3)
@@ -329,20 +307,22 @@ def get_dataset_mean_std(dataset):
         
 def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale_factor=8):
     ground_truth_keypoints = ground_truth_keypoints.cuda()
-    ground_truth_offset_maps = torch.zeros((NUM_KEYPOINTS, height, width, 2), dtype=torch.float32).cuda()
+    #TODO : find the num_pose for each ground truth and use that instead 
+    num_poses = 15
+    ground_truth_offset_maps = torch.zeros((num_poses, NUM_KEYPOINTS, height, width, 2), dtype=torch.float32).cuda()
     
-    print("ground_truth_offset_maps shape: ", ground_truth_offset_maps)
-    print("ground_truth_keypoints shape: : ", ground_truth_keypoints)
+    print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
+    print("ground_truth_keypoints shape: : ", ground_truth_keypoints.shape)
     
-    for k in range(NUM_KEYPOINTS):
-        for i in range(height):
-            for j in range(width):
-                y_coord = i * scale_factor
-                x_coord = j * scale_factor
-                ground_truth_offset_maps[k, i, j] = ground_truth_keypoints[k] - torch.tensor([y_coord, x_coord]).cuda()
-
+    for n in range(num_poses):
+        for k in range(NUM_KEYPOINTS):
+            for i in range(height):
+                for j in range(width):
+                    y_coord = i * scale_factor
+                    x_coord = j * scale_factor
+                    ground_truth_offset_maps[n, k, i, j] = ground_truth_keypoints[n,k] - torch.tensor([y_coord, x_coord]).cuda()
+                    
     # reshaped_ground_truth_offset_maps = torch.cat([ground_truth_offset_maps[:, :, :, 0], ground_truth_offset_maps[:, :, :, 1]], dim=0)
-    
     return ground_truth_offset_maps
 
 
@@ -416,13 +396,14 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     #turn epoch to text
                     appended_text = "train_" + str(epoch) + "_"
-                       
+                    print("pose_scores shape: ", pose_scores.shape)
+                    print("keypoint_scores shape: ", keypoint_scores.shape)
                     draw_coordinates_to_image_file(appended_text, train_image_path, output_dir, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
                     
-                    print("decoded_offsets: ", decoded_offsets)
+                    # print("decoded_offsets: ", decoded_offsets)
                     print("decoded_offsets shape: ", decoded_offsets.shape)
 
                     keypoint_coords = torch.from_numpy(keypoint_coords)
@@ -471,8 +452,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 
                 # print("**output[0] device: ", output[0].device)
                 # print("**ground truth offsets device: ", ground_truth_offsets.device)
-
-
                 
                 # print("**output[0] shape: ", output[0].shape)
                 
@@ -492,8 +471,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     # print("item (heatmap) type: ", type(item))
                     
                     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = decode_pose_from_batch_item(epoch, test_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
-
-
                     
                     appended_text = "test_"
                     
@@ -592,6 +569,7 @@ def main():
     batch_size = 2
     learning_rate = 0.001
     num_epochs = 10
+
         
     config={
         "epochs": num_epochs,

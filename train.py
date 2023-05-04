@@ -339,7 +339,7 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True):
     step = 0
-    score_threshold = 0.25
+    score_threshold = 0.5
     train_num_batches = len(train_loader)
 
     for epoch in range(num_epochs):
@@ -581,7 +581,6 @@ def main():
     learning_rate = 0.001
     num_epochs = 10
 
-        
     config={
         "epochs": num_epochs,
          "batch_size": batch_size,

@@ -137,11 +137,11 @@ def decode_multiple_poses(
         if pose_count >= max_pose_detections:
             break
             
-        print("-after decoding-")
-        print("pose_scores shape: ", pose_scores.shape)
-        print("pose_keypoint_scores shape: ", pose_keypoint_scores.shape)
-        print("pose_keypoint_coords shape: ", pose_keypoint_coords.shape)
-        print("pose_offsets shape: ", pose_offsets.shape)
-        print("pose_count: ", pose_count)
+        # print("-after decoding-")
+        # print("pose_scores shape: ", pose_scores.shape)
+        # print("pose_keypoint_scores shape: ", pose_keypoint_scores.shape)
+        # print("pose_keypoint_coords shape: ", pose_keypoint_coords.shape)
+        # print("pose_offsets shape: ", pose_offsets.shape)
+        # print("pose_count: ", pose_count)
 
     return pose_scores, pose_keypoint_scores, pose_keypoint_coords, pose_offsets

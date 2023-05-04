@@ -623,8 +623,6 @@ def main():
         # replace the Dataset normalization transforms  in class PosenetDatasetImage(Dataset) 
         # mean, std = get_dataset_mean_std(train_dataset)
 
-        
-
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 

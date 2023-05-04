@@ -62,15 +62,16 @@ def decode_multiple_poses(
         scores, offsets, displacements_fwd, displacements_bwd, output_stride,
         max_pose_detections=10, score_threshold=0.5, nms_radius=20, min_pose_score=0.5):
 
-    print("---inside decode multi pose ---")
+    # print("---inside decode multi pose ---")
+    
     # perform part scoring step on GPU as it's expensive
     # TODO determine how much more of this would be worth performing on the GPU
-    print("score_threshold: ", score_threshold)
-    print("local max radius: ", LOCAL_MAXIMUM_RADIUS)
+    # print("score_threshold: ", score_threshold)
+    # print("local max radius: ", LOCAL_MAXIMUM_RADIUS)
     # print("heatmaps (scores): ", scores)
-    print("scores shape: ", scores.shape)
-    print("displacements shape: ", displacements_fwd.shape)
-    print("offsets shape: ", offsets.shape)
+    # print("scores shape: ", scores.shape)
+    # print("displacements shape: ", displacements_fwd.shape)
+    # print("offsets shape: ", offsets.shape)
     part_scores, part_idx = build_part_with_score_torch(score_threshold, LOCAL_MAXIMUM_RADIUS, scores)
     # print("part_scores after built_part_score: ", part_scores)
     # print("part_idx: ", part_idx)

@@ -205,6 +205,8 @@ def load_keypoints(keypoints, num_keypoints, heatmap_shape):
 # load the keypoints from the keypoint file
 # keypoints are scaled to heatmap size
 def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_shape):
+    #TODO : map the right keypoints to the right order?? 
+    
     with open(keypoint_path, "r") as f:
         data = json.load(f)
         
@@ -221,8 +223,11 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
         poses = []
         keypoints_list = []
         
-        name_mapping = {add_space_before_capital(name).lower(): i for i, name in enumerate(constants.PART_NAMES)}
-        print("name_mapping: ", name_mapping)
+        # Create a mapping from keypoint labels to their indices in constants.PART_NAMES
+        label_to_index
+        
+        label_to_index = {add_space_before_capital(name).lower(): i for i, name in enumerate(constants.PART_NAMES)}
+        print("label_to_index: ", label_to_index)
         
         # Iterate over the annotations
         pose_count = 0
@@ -235,7 +240,7 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
             elif annotation['type'] == 'point':
                 parent_id = annotation['metadata']['system']['parentId']
                 keypoint_label = annotation['label']
-                keypoint_id = name_mapping[keypoint_label]
+                keypoint_id = label_to_index[keypoint_label.lower()]
                 x = annotation['coordinates']['x'] * x_scale
                 y = annotation['coordinates']['y'] * y_scale
                 keypoints_list.append((parent_id, keypoint_id, x, y))

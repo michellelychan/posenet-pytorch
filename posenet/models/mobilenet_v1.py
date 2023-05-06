@@ -57,6 +57,7 @@ class InputConv(nn.Module):
 class SeperableConv(nn.Module):
     def __init__(self, inp, outp, k=3, stride=1, dilation=1):
         super(SeperableConv, self).__init__()
+        self.out_channels = outp
         self.depthwise = nn.Conv2d(
             inp, inp, k, stride,
             padding=_get_padding(k, stride, dilation), dilation=dilation, groups=inp)
@@ -133,6 +134,7 @@ class MobileNetV1(nn.Module):
 
         assert model_id in MOBILENET_V1_CHECKPOINTS.keys()
         self.output_stride = output_stride
+        self.model_id = model_id
 
         if model_id == 50:
             arch = MOBILE_NET_V1_50

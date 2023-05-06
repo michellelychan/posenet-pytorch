@@ -78,7 +78,6 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         self.use_target_weight = use_target_weight
         self.max_num_poses= max_num_poses
         
-
     import torch.nn.functional as F
 
     def create_mask(self, ground_truth, threshold=0.1):
@@ -95,7 +94,73 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         return mask
 
 
-    def create_binary_target_heatmap(self, target_heatmaps, target_keypoints, radius=3):
+    
+
+    def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets, max_num_poses = 15):
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        
+        binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+        
+        # Heatmap loss
+        
+        loss = 0.0
+        
+        #TODO update num_people logic
+        print("--target keypoints --")
+        print("target keypoints shape: ", target_keypoints.shape)
+        
+        num_people = count_people(target_keypoints)
+        
+        heatmap_loss = torch.tensor(0.0).cuda()
+        
+        offset_loss = torch.tensor(0.0).cuda()
+        pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
+        print("pred_offsets_shape: ", pred_offsets.shape)
+        ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
+
+
+        for pose in range(num_people):
+            # Heatmap loss 
+                        
+            binary_target_heatmaps[pose, :, :, :] = create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
+            pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
+
+#             print("pred_heatmaps shape: ", pred_heatmaps.shape)
+#             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
+#             print("target_heatmaps shape: ", target_heatmaps.shape)
+            
+            heatmap_loss += pose_heatmap_loss.cuda()
+            print("in pose loop: heatmap_loss value: ", heatmap_loss)
+            
+            # Offset Loss
+            # Ground truth offsets will turn to shape [15, 17, 33, 33, 2]
+            print("target_keypoints shape: ", target_keypoints.shape)
+            
+            mask = self.create_mask(target_heatmaps[pose])
+            mask = mask.unsqueeze(-1)
+            
+            masked_true_offsets = ground_truth_offset_maps[pose] * mask
+            masked_pred_offsets = pred_offsets * mask
+            
+
+            
+            offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
+            print("in pose loop: offset_loss value: ", offset_loss)
+
+        
+        heatmap_loss /= num_people
+        offset_loss = offset_loss / num_people
+        
+        print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)    
+
+        loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
+            
+        return loss
+
+
+# Create Binary Target Heatmaps for Loss Functions 
+
+def create_binary_target_heatmap(target_heatmaps, target_keypoints, radius=3):
         #TODO: check if binary target heatmaps is in the right shape and if it should be zeros_like
         binary_target_heatmaps = torch.zeros_like(target_heatmaps)
 
@@ -119,65 +184,6 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
                 binary_target_heatmaps[k, y_min:y_max, x_min:x_max] = (distances <= radius).float()
 
         return binary_target_heatmaps
-
-    def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets, max_num_poses = 15):
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        
-        binary_target_heatmaps = torch.zeros_like(target_heatmaps)
-        
-        # Heatmap loss
-        
-        loss = 0.0
-        
-        #TODO update num_people logic
-        print("--target keypoints --")
-        print("target keypoints shape: ", target_keypoints.shape)
-        
-        num_people = count_people(target_keypoints)
-        
-        heatmap_loss = torch.tensor(0.0).cuda()
-        offset_loss = torch.tensor(0.0).cuda()
-
-        pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
-        print("pred_offsets_shape: ", pred_offsets.shape)
-        ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
-
-
-        for pose in range(num_people):
-            # Heatmap loss 
-                        
-            binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
-            pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
-
-#             print("pred_heatmaps shape: ", pred_heatmaps.shape)
-#             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
-#             print("target_heatmaps shape: ", target_heatmaps.shape)
-            
-            heatmap_loss += pose_heatmap_loss.cuda()
-            print("in pose loop: heatmap_loss value: ", heatmap_loss)
-            
-            # Offset Loss
-            # Ground truth offsets will turn to shape [15, 17, 33, 33, 2]
-            print("target_keypoints shape: ", target_keypoints.shape)
-            
-            mask = self.create_mask(target_heatmaps[pose])
-            mask = mask.unsqueeze(-1)
-            
-            masked_true_offsets = ground_truth_offset_maps[pose] * mask
-            masked_pred_offsets = pred_offsets * mask
-            
-            offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
-            print("in pose loop: offset_loss value: ", offset_loss)
-
-        
-        heatmap_loss /= num_people
-        offset_loss = offset_loss / num_people
-        
-        print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)    
-
-        loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
-            
-        return loss
 
 
 class PosenetDatasetImage(Dataset):
@@ -321,8 +327,12 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
     # print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
     return ground_truth_offset_maps
 
+# To find the auxiliary layer for the auxiliary loss
+def get_output_from_layer(model, layer_index, x):
+    sub_model = torch.nn.Sequential(*list(model.features.children())[:layer_index + 1])
+    return sub_model(x)
 
-def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15):
+def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15, aux_layer_index=None):
     step = 0
     score_threshold = 0.25
     train_num_batches = len(train_loader)
@@ -369,6 +379,20 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
                 
                 batch_loss = 0
+                
+                if aux_layer_index is not None:
+                    x = data_squeezed
+                    aux_output = get_output_from_layer(model, aux_layer_index, x)
+                    print("--aux output--")
+                    print("aux_output shape: ", aux_output.shape)
+                    
+                    heatmap_layer = nn.Conv2d(512, 17, kernel_size=1).cuda()
+                    
+                    with torch.no_grad():  # No gradient calculation is needed if you don't want to update the heatmap_layer weights
+                        heatmaps = heatmap_layer(aux_output)
+                        print("aux_layer heatmaps shape: ", heatmaps.shape)
+                
+                    
                 
                 #heatmap tensor = output[0] 
                 #heatmap size is num of images x 17 keypoints x resolution x resolution 
@@ -587,6 +611,9 @@ def main():
          "lr": learning_rate,
          }
     
+    
+    
+    
     with wandb.init(project="posenet", config=config, name='PoseNet 101'):
 
         #instatiate model 
@@ -596,16 +623,24 @@ def main():
         for param in model.parameters():
             param.requires_grad = True
     
-        output_stride = model.output_stride     
+        output_stride = model.output_stride  
+        
+        aux_layer_indices = {
+            50: 5,  # 6th layer for V1_50
+            75: 6,  # 7th layer for V1_75
+            100: 7,  # 8th layer for V1_100
+            101: 7,
+        }
+    
+        aux_layer_index = aux_layer_indices[model.model_id]
 
             
         plt = points_to_heatmap(4.5, 4.7, 21)
     
         # Define loss function and optimizer
         criterion = MultiPersonHeatmapOffsetAggregationLoss()
+        
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    
-    
 
         # Training loop
         train_image_path = args.train_image_dir
@@ -628,7 +663,7 @@ def main():
 
         
         
-        train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, train_image_path, output_dir, scale_factor, is_train)
+        train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, train_image_path, output_dir, scale_factor, is_train=is_train, aux_layer_index=aux_layer_index)
 
         print('Setting up...')
         

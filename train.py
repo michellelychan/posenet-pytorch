@@ -1,3 +1,4 @@
+
 #create a train module that trains the model
 # Path: posenet-pytorch/train.py
 #inspiration: https://github.com/youngguncho/PoseNet-Pytorch/blob/master/posenet_simple.py 
@@ -130,8 +131,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         loss = 0.0
         
         #TODO update num_people logic
-        print("--target keypoints --")
-        print("target keypoints shape: ", target_keypoints.shape)
+        # print("--target keypoints --")
+        # print("target keypoints shape: ", target_keypoints.shape)
         
         num_people = count_people(target_keypoints)
         
@@ -139,7 +140,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         offset_loss = torch.tensor(0.0).cuda()
 
         pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
-        print("pred_offsets_shape: ", pred_offsets.shape)
+        # print("pred_offsets_shape: ", pred_offsets.shape)
         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
 
 
@@ -158,7 +159,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             # Offset Loss
             # Ground truth offsets will turn to shape [15, 17, 33, 33, 2]
-            print("target_keypoints shape: ", target_keypoints.shape)
+            # print("target_keypoints shape: ", target_keypoints.shape)
             
             mask = self.create_mask(target_heatmaps[pose])
             mask = mask.unsqueeze(-1)
@@ -177,7 +178,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
 
         loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
             
-        return loss
+        return loss, heatmap_loss, offset_loss
 
 
 class PosenetDatasetImage(Dataset):
@@ -330,11 +331,13 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
-        batch_checkpoint = 1
+        batch_checkpoint = 2
         
         epoch_durations = []
         running_loss_value = 0
         test_loss_value = 0
+        heatmap_loss_value = 0
+        offset_loss_value = 0
         test_loss = torch.zeros(1)
         
         # Set model to train mode
@@ -407,7 +410,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     print("offsets shape: ", offsets.shape)
                     
-                    loss = criterion(train_heatmaps, ground_truth_heatmaps[item_idx] , ground_truth_keypoints[item_idx],  offsets, ground_truth_offsets[item_idx], max_num_poses)
+                    loss, heatmap_loss, offset_loss = criterion(train_heatmaps, ground_truth_heatmaps[item_idx] , ground_truth_keypoints[item_idx],  offsets, ground_truth_offsets[item_idx], max_num_poses)
 
                     # Backward pass
                     optimizer.zero_grad()
@@ -420,13 +423,22 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                           .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.mean().item()))
                     
                     running_loss_value += loss.item()
+                    heatmap_loss_value += heatmap_loss.item()
+                    offset_loss_value += offset_loss.item()
+                    
                     batch_loss += loss
                     
                 if batch_idx % batch_checkpoint == batch_checkpoint-1:
                     step += 1
-                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
+                    print("--in batch checkpoint--")
+                    print("train_loss: ", running_loss_value / batch_checkpoint)
+                    print("heatmap_loss: ", heatmap_loss_value / batch_checkpoint)
+                    print("offset_loss: ", offset_loss_value / batch_checkpoint)
+                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "heatmap_loss": heatmap_loss_value / batch_checkpoint, "offset_loss": offset_loss_value / batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
                     print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss_value / batch_checkpoint))
                     running_loss_value = 0.0
+                    heatmap_loss_value = 0.0
+                    offset_loss_value = 0.0
                 
                 batch_loss.backward()
                 optimizer.step()
@@ -484,14 +496,18 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     # print("keypoint_coords device: ", keypoint_coords.device)
                     # print("ground_truth_keypoints[item_idx] device: ", ground_truth_keypoints[item_idx].device)
-                    loss = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx], max_num_poses).item()
+                    loss, heatmap_loss, offset_loss = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx], max_num_poses)
                     
                     
-                    test_loss += loss
-                    print("inside batch loss value: ", loss)
+                    test_loss += loss.item()
+                    print("-inside test-")
+                    print("heatmap_loss: ", heatmap_loss.item())
+                    print("offset_loss: ", offset_loss.item())
+                    print("inside batch loss: ", loss.item())
                     
             test_loss /= len(test_loader.dataset)
             test_loss_value = test_loss.item()
+            
             print("test_loss_value: ", test_loss_value)
             print("step: ", step)
             

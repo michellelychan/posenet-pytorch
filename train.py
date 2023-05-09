@@ -176,7 +176,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         
         print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)    
 
-        loss += self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss
+        loss += (self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss) / (self.heatmap_weight + self.offset_weight)
             
         return loss, heatmap_loss, offset_loss
 
@@ -422,12 +422,19 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
                           .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.mean().item()))
                     
+                    
+                    
                     running_loss_value += loss.item()
                     heatmap_loss_value += heatmap_loss.item()
                     offset_loss_value += offset_loss.item()
                     
                     batch_loss += loss
                     
+                batch_loss = batch_loss / len(train_loader)
+                running_loss_value = running_loss_value / len(train_loader)
+                offset_loss_value = offset_loss_value / len(train_loader)
+                heatmap_loss_value = heatmap_loss_value / len(train_loader)
+                
                 if batch_idx % batch_checkpoint == batch_checkpoint-1:
                     step += 1
                     print("--in batch checkpoint--")

@@ -99,7 +99,7 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         
         for pose_idx in range(num_poses):
             save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, heatmaps_dir)
-            save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir)
+            save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, "heatmaps_2")
             
         # save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
         
@@ -134,6 +134,8 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
 
     # Normalize the heatmap values
     heatmap /= np.max(heatmap)
+    
+    
     return heatmap
 
 
@@ -224,7 +226,6 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
         keypoints_list = []
         
         # Create a mapping from keypoint labels to their indices in constants.PART_NAMES
-        label_to_index
         
         label_to_index = {add_space_before_capital(name).lower(): i for i, name in enumerate(constants.PART_NAMES)}
         print("label_to_index: ", label_to_index)

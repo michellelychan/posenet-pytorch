@@ -120,65 +120,179 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
                 binary_target_heatmaps[k, y_min:y_max, x_min:x_max] = (distances <= radius).float()
 
         return binary_target_heatmaps
+    
+    def create_aggregated_binary_target_heatmap(self, aggregated_target_heatmaps, target_keypoints, radius=3):
+        # Create a binary heatmap of the same shape as the aggregated heatmap
+        binary_target_heatmap = torch.zeros_like(aggregated_target_heatmaps)
 
-    def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets, max_num_poses = 15):
+        # Loop over all people and keypoints
+        for keypoints in target_keypoints:
+            for k in range(keypoints.shape[0]):
+                x, y = keypoints[k, 0], keypoints[k, 1]
+                if (x != 0 and x != -1) or (y != 0 and y != -1):
+                    x, y = int(x.item()), int(y.item())
+                    y_min, y_max = max(0, y - radius), min(binary_target_heatmap.shape[1], y + radius + 1)
+                    x_min, x_max = max(0, x - radius), min(binary_target_heatmap.shape[2], x + radius + 1)
+
+                    y_indices, x_indices = np.mgrid[y_min:y_max, x_min:x_max]
+                    y_indices, x_indices = torch.tensor(y_indices), torch.tensor(x_indices)
+                    distances = torch.sqrt((y_indices - y)**2 + (x_indices - x)**2)
+
+                    # Set the region around the keypoint to 1 in the binary heatmap
+                    binary_target_heatmap[k, y_min:y_max, x_min:x_max] = (distances <= radius).float()
+
+        return binary_target_heatmap
+    
+    def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets, max_num_poses = 10):
+        
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
-        binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+        # binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+        
+        
         
         # Heatmap loss
         
         loss = 0.0
+        heatmap_loss = torch.tensor(0.0).cuda()
+        offset_loss = torch.tensor(0.0).cuda()
+        
+        pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
+        target_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
+        aggregated_target_heatmap = torch.sum(target_heatmaps, dim=0)
+        binary_target_heatmap = self.create_aggregated_binary_target_heatmap(aggregated_target_heatmaps, target_keypoints, self.radius)
+        
+        heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmap.float())
+        
+        print("binary_target_heatmap shape: ", binary_target_heatmap.shape)
+        print("aggregated_ground_truth_heatmaps shape: ", aggregated_target_heatmap.shape)
+        print("heatmap_loss in forward: ", heatmap_loss)
+        
+        # Count the number of non-zero heatmaps for each location and each joint
+        offset_counts = torch.sum((target_heatmaps > 0), dim=0, keepdim=True)
+        print("offset counts")
+        print(offset_counts)
+
+        # Avoid division by zero
+        offset_counts = torch.where(offset_counts > 0, offset_counts, torch.ones_like(offset_counts))
+
+        # Sum all offset vectors
+        summed_target_offset_map = torch.sum(target_offset_maps, dim=0)
+        
+        print("summed_offsets shape: ", summed_target_offsets.shape)
+
+        # Average the offset vectors
+        aggregated_target_offsets = summed_target_offsets / offset_counts
+        
+        
+        mask = self.create_mask(aggregated_target_heatmap)
+        mask = mask.unsqueeze(-1)
+        
+        masked_true_offsets = summed_target_offset_map * mask
+        masked_pred_offsets = pred_offsets * mask
+            
+        offset_loss self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
+
         
         #TODO update num_people logic
         # print("--target keypoints --")
         # print("target keypoints shape: ", target_keypoints.shape)
         
-        num_people = count_people(target_keypoints)
+        # num_people = count_people(target_keypoints)
+        # print("num people: ", num_people)
         
-        heatmap_loss = torch.tensor(0.0).cuda()
-        offset_loss = torch.tensor(0.0).cuda()
-
-        pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
+        
         # print("pred_offsets_shape: ", pred_offsets.shape)
-        ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
+        
+        
 
+        
+        
+        
+        
+        
 
-        for pose in range(num_people):
-            # Heatmap loss 
-                        
-            binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
-            pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
+             
 
 #             print("pred_heatmaps shape: ", pred_heatmaps.shape)
 #             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
 #             print("target_heatmaps shape: ", target_heatmaps.shape)
             
-            heatmap_loss += pose_heatmap_loss.cuda()
-            print("in pose loop: heatmap_loss value: ", heatmap_loss)
+            # print("in pose loop: heatmap_loss value: ", heatmap_loss)
             
             # Offset Loss
             # Ground truth offsets will turn to shape [15, 17, 33, 33, 2]
             # print("target_keypoints shape: ", target_keypoints.shape)
             
-            mask = self.create_mask(target_heatmaps[pose])
-            mask = mask.unsqueeze(-1)
             
-            masked_true_offsets = ground_truth_offset_maps[pose] * mask
-            masked_pred_offsets = pred_offsets * mask
-            
-            offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
-            print("in pose loop: offset_loss value: ", offset_loss)
 
-        
-        heatmap_loss /= num_people
-        offset_loss = offset_loss / num_people
-        
-        print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)    
-
-        loss += (self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss) / (self.heatmap_weight + self.offset_weight)
+        loss = (self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss) / (self.heatmap_weight + self.offset_weight)
             
         return loss, heatmap_loss, offset_loss
+
+#     def forward(self, pred_heatmaps, target_heatmaps, target_keypoints, pred_offsets, target_offsets, max_num_poses = 15):
+#         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        
+#         binary_target_heatmaps = torch.zeros_like(target_heatmaps)
+        
+#         # Heatmap loss
+        
+#         loss = 0.0
+        
+#         #TODO update num_people logic
+#         # print("--target keypoints --")
+#         # print("target keypoints shape: ", target_keypoints.shape)
+        
+#         num_people = count_people(target_keypoints)
+#         print("num people: ", num_people)
+        
+#         heatmap_loss = torch.tensor(0.0).cuda()
+#         offset_loss = torch.tensor(0.0).cuda()
+
+#         pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
+#         # print("pred_offsets_shape: ", pred_offsets.shape)
+#         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
+        
+
+#         for pose in range(num_people):
+#             # Heatmap loss 
+#             binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
+            
+            
+#             pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
+
+# #             print("pred_heatmaps shape: ", pred_heatmaps.shape)
+# #             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
+# #             print("target_heatmaps shape: ", target_heatmaps.shape)
+            
+#             heatmap_loss += pose_heatmap_loss.cuda()
+#             # print("in pose loop: heatmap_loss value: ", heatmap_loss)
+            
+#             # Offset Loss
+#             # Ground truth offsets will turn to shape [15, 17, 33, 33, 2]
+#             # print("target_keypoints shape: ", target_keypoints.shape)
+            
+#             mask = self.create_mask(target_heatmaps[pose])
+#             mask = mask.unsqueeze(-1)
+            
+#             masked_true_offsets = ground_truth_offset_maps[pose] * mask
+#             masked_pred_offsets = pred_offsets * mask
+            
+#             offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
+#             print("in pose loop: offset_loss value: ", offset_loss)
+
+        
+#         heatmap_loss /= num_people
+#         offset_loss = offset_loss / num_people
+#         print("ground_truth_heatmaps shape: ", target_heatmaps.shape)
+#         print("ground_truth_heatmaps: ")
+#         print(ground_truth_heatmaps)
+#         print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)    
+#         print(ground_truth_offset_maps)
+
+#         loss += (self.heatmap_weight * heatmap_loss + self.offset_weight * offset_loss) / (self.heatmap_weight + self.offset_weight)
+            
+#         return loss, heatmap_loss, offset_loss
 
 
 class PosenetDatasetImage(Dataset):
@@ -322,6 +436,36 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
     # print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
     return ground_truth_offset_maps
 
+# Accuracy Calculation based on COCO Dataset OKS method
+
+def recall_m(y_true, y_pred, width=33, height=33):
+    true_positives = torch.sum(torch.round(torch.clamp(y_true * y_pred, 0, 1)))
+    possible_positives = torch.sum(torch.round(torch.clamp(y_true, 0, 1)))
+    recall = true_positives / (possible_positives + torch.finfo(torch.float32).eps)
+    return recall
+
+def precision_m(y_true, y_pred, width=33, height=33):
+    y_true
+    
+    true_positives = torch.sum(torch.round(torch.clamp(y_true * y_pred, 0, 1)))
+    predicted_positives = torch.sum(torch.round(torch.clamp(y_pred, 0, 1)))
+    precision = true_positives / (predicted_positives + torch.finfo(torch.float32).eps)
+    return precision
+
+def f1_m(y_true, y_pred):
+    precision = precision_m(y_true, y_pred)
+    recall = recall_m(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+torch.finfo(torch.float32).eps))
+
+def mean_iou(y_true, y_pred):
+    y_pred = torch.gt(y_pred, 0.25).float()
+    inter = torch.sum(torch.sum(torch.sum(y_true * y_pred, dim=3), dim=2), dim=1)
+    union = torch.sum(torch.sum(torch.sum(y_true + y_pred, dim=3), dim=2), dim=1) - inter
+    return torch.mean((inter + torch.finfo(torch.float32).eps) / (union + torch.finfo(torch.float32).eps))
+
+
+
+# Train 
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15):
     step = 0
@@ -354,6 +498,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             model.train()
               
             print(train_loader)
+            
         
             # print("train loader: ", next(iter(train_loader)))
 
@@ -394,9 +539,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     # print(keypoint_coords)         
                     
                     #turn epoch to text
+                    print("===inside train loop===")
                     appended_text = "train_" + str(epoch) + "_"
                     print("pose_scores shape: ", pose_scores.shape)
                     print("keypoint_scores shape: ", keypoint_scores.shape)
+                    print("keypoint_scores")
+                    print(keypoint_scores)
                     draw_coordinates_to_image_file(appended_text, train_image_path, output_dir, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
@@ -487,11 +635,19 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = decode_pose_from_batch_item(epoch, test_image_path, filenames[item_idx], item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train)
                     
+                    
                     appended_text = "test_"
                     
 
-                    draw_coordinates_to_image_file(appended_text, test_image_path, output_dir, output_stride, scale_factor, pose_scores,keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
+                    # print("--keypoint coords predicted ---")
+                    # print("keypoint_coords shape: ", keypoint_coords.shape)
+                    # print(keypoint_coords) 
+                    
+#                     print("--keypoint coords ground truth ---")
+#                     print("ground_truth_keypoints[item_idx] shape: ", ground_truth_keypoints[item_idx].shape)
+#                     print(ground_truth_keypoints[item_idx])
+                    
                     
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
@@ -551,7 +707,6 @@ def count_people(target_keypoints):
 def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scale_factor, height, width, score_threshold, LOCAL_MAXIMUM_RADIUS, output_stride, displacements_fwd, displacements_bwd, is_train):
     heatmaps = item
     
-
     # offsets_reshaped = offsets.detach().cpu().numpy().reshape(2, -1, height, width).transpose((1, 2, 3, 0))
     
     if is_train:
@@ -564,6 +719,11 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
         heatmaps = torch.tensor(heatmaps, requires_grad=is_train)
         
     # print("---- in decode pose from batch item --- ") 
+    print("heatmaps shape: ", heatmaps.shape)
+    print("offsets shape: ", offsets.shape)
+    print("displacements_fwd shape: ", displacements_fwd.shape)
+    print("displacements_bwd shape: ", displacements_bwd.shape)
+               
     pose_scores, keypoint_scores, keypoint_coords, decoded_offsets = posenet.decode_multi.decode_multiple_poses(
                 heatmaps,
                 offsets,
@@ -571,12 +731,16 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
                 displacements_bwd,
                 output_stride=output_stride,
                 max_pose_detections=10,
-                min_pose_score=score_threshold)
+                min_pose_score=0.5)
 
     
     # print("decoded offsets: ", decoded_offsets)
     
     # Find the indices of poses with scores above the threshold
+    
+    # print("--inside decode pose from batch item, after decode_multiple_poses --")
+    # print("keypoint_coords")
+    # print(keypoint_coords)
     valid_indices = np.where(pose_scores >= score_threshold)[0]
 
     # Filter the pose_scores, keypoint_scores, and keypoint_coords using valid_indices

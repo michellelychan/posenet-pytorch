@@ -99,7 +99,7 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         
         for pose_idx in range(num_poses):
             save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, heatmaps_dir)
-            save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, "heatmaps_2")
+            save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir)
             
         # save_offset_vectors(offset_vectors, image_file, num_keypoints, heatmaps_dir)
         
@@ -134,8 +134,6 @@ def points_to_heatmap(keypoint_x, keypoint_y, kernel_size=11, heatmap_size=(33,3
 
     # Normalize the heatmap values
     heatmap /= np.max(heatmap)
-    
-    
     return heatmap
 
 
@@ -168,9 +166,17 @@ def save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, hea
         
 import matplotlib.pyplot as plt
 
-def save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir="heatmaps"):
+
+
+def save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir="heatmaps", epoch=''):
     # create a folder for the heatmaps of this image
-    output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0], f"pose_{pose_idx}")
+    print("--in save heatmaps--")
+    print("epoch: ", epoch)
+    if epoch == '':
+        output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0], f"pose_{pose_idx}")
+    else:
+        output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0], f"epoch_{epoch}", f"pose_{pose_idx}")
+    
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'npy'), exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'png'), exist_ok=True)
@@ -179,8 +185,18 @@ def save_heatmaps(heatmaps, image_file, pose_idx, num_keypoints, heatmaps_dir="h
         output_file = os.path.join(output_dir, 'npy', f"heatmap_{i}.npy")
         output_image = os.path.join(output_dir, 'png', f"heatmap_{i}.png")
         
-        np.save(output_file, heatmaps[pose_idx][i])
-        plt.imshow(heatmaps[pose_idx][i], cmap='hot', interpolation='nearest')
+        # if heatmaps are of dimension [num_people, 17, 33, 33]
+        print("heatmaps shape: ", heatmaps.shape)
+        print('heatmaps ndim: ', heatmaps.ndim)
+        
+        if heatmaps.ndim == 4:
+            np.save(output_file, heatmaps[pose_idx][i])
+            plt.imshow(heatmaps[pose_idx][i], cmap='hot', interpolation='nearest')
+        # heatmaps with shape [17, 33, 33] (eg. pred_heatmaps)
+        else:
+            np.save(output_file, heatmaps[i])
+            plt.imshow(heatmaps[i], cmap='hot', interpolation='nearest')
+        print("saved heatmap of epoch ", epoch, " filename ", image_file)
         plt.colorbar()
         plt.savefig(output_image)
         plt.clf()
@@ -226,6 +242,7 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
         keypoints_list = []
         
         # Create a mapping from keypoint labels to their indices in constants.PART_NAMES
+        label_to_index
         
         label_to_index = {add_space_before_capital(name).lower(): i for i, name in enumerate(constants.PART_NAMES)}
         print("label_to_index: ", label_to_index)

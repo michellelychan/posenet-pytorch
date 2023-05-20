@@ -74,8 +74,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
         self.radius = radius
-        self.heatmap_weight = heatmap_weight
-        self.offset_weight = 0
+        self.heatmap_weight = 0
+        self.offset_weight = offset_weight
         self.use_target_weight = use_target_weight
         self.max_num_poses= max_num_poses
         
@@ -108,6 +108,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             x, y = target_keypoints[k, 0], target_keypoints[k, 1]
             # print("x: ", x)
             # print("y: ", y)
+            
             if (x != 0 and x != -1) or (y != 0 and y != -1):
                 x, y = int(x.item()), int(y.item())
                 y_min, y_max = max(0, y - radius), min(binary_target_heatmaps.shape[1], y + radius + 1)
@@ -143,7 +144,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
         # print("pred_offsets_shape: ", pred_offsets.shape)
         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
-
+        
+        
 
         for pose in range(num_people):
             # Heatmap loss 
@@ -153,8 +155,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             
             pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
-
-#             print("pred_heatmaps shape: ", pred_heatmaps.shape)
+            
+            #             print("pred_heatmaps shape: ", pred_heatmaps.shape)
 #             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
 #             print("target_heatmaps shape: ", target_heatmaps.shape)
             
@@ -169,6 +171,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             mask = mask.unsqueeze(-1)
             
+            
+            
             print("&&&&loss&&&&")
             print("mask shape: ", mask.shape)
             print("ground_truth_offset_maps[pose] shape: ", ground_truth_offset_maps[pose].shape)
@@ -176,6 +180,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             masked_true_offsets = ground_truth_offset_maps[pose] * mask
             masked_pred_offsets = pred_offsets * mask
+            
             
             offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
             print("in pose loop: offset_loss value: ", offset_loss)
@@ -333,6 +338,15 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
     # print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
     return ground_truth_offset_maps
 
+def write_keypoints_to_file(keypoints, epoch, file_name, pose_scores="", keypoint_scores=""):
+    with open(file_name, 'a') as f:
+        f.write(f"Epoch: {epoch}\n")
+        for pose_idx, pose in enumerate(keypoints):
+            for idx, keypoint in enumerate(pose): 
+                f.write(f"{idx}: {keypoint}\n")
+                f.write(f"keypoint score: {keypoint_scores[pose][idx]}")
+        f.write(f"pose score: " {pose_scores[pose_idx]}")
+        f.write("\n")  # Separate epochs with a new line
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15):
     step = 0
@@ -360,10 +374,26 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         # for name, param in model.named_parameters():
         #     print(name, param.data.norm())
 
-            
+        # with torch.no_grad():    
         if is_train:
             model.train()
             
+            for param in model.parameters():
+                param.requires_grad = False
+
+            # Unfreeze the output layers
+            for param in model.heatmap.parameters():
+                param.requires_grad = True
+
+            for param in model.offset.parameters():
+                param.requires_grad = True
+
+            for param in model.displacement_fwd.parameters():
+                param.requires_grad = True
+
+            for param in model.displacement_bwd.parameters():
+                param.requires_grad = True
+                
             print("---in training ---")
             
             print(train_loader)
@@ -405,9 +435,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     train_heatmaps = item
                     
                     filename = filenames[item_idx]
-                    save_heatmaps(train_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir="pred_heatmaps_training_3", epoch=epoch)
-
-
+                    heatmaps_dir = "pred_heatmaps_training_offset_loss_only"
+                    
+                    save_heatmaps(train_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir=heatmaps_dir, epoch=epoch)
+                    
+                    
+                    
                     # print("item (heatmap) type: ", type(item))
                     
                     height = train_heatmaps.shape[1]
@@ -422,7 +455,22 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     appended_text = "train_" + str(epoch) + "_"
                     print("pose_scores shape: ", pose_scores.shape)
                     print("keypoint_scores shape: ", keypoint_scores.shape)
-                    draw_coordinates_to_image_file(appended_text, train_image_path, output_dir, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
+                    output_dir_epoch = "keypoints_output_" + str(epoch)
+                    
+                    print("draw_image")
+                    print(type(draw_image))
+                    print("draw_image[idx]: ", draw_image[item_idx].shape)
+                    print(draw_image.shape)
+                    draw_image_with_kp = posenet.draw_skel_and_kp(np.array(draw_image[item_idx]), pose_scores, keypoint_scores, keypoint_coords,
+                                                          min_pose_score=0.25, min_part_score=0.25)
+                    
+                    if not os.path.exists(os.path.join('./keypoint_output_training', filename, output_dir_epoch)):
+                        os.makedirs(os.path.join('./keypoint_output_training', filename, output_dir_epoch))
+                    
+                    cv2.imwrite(os.path.join('./keypoint_output_training', filename, output_dir_epoch, filename + '_keypoints.jpg'), draw_image_with_kp)
+
+                    
+                    # draw_coordinates_to_image_file(appended_text, train_image_path, output_dir_epoch, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
@@ -481,8 +529,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     heatmap_loss_value = 0.0
                     offset_loss_value = 0.0
                 
-                batch_loss.backward()
-                optimizer.step()
+                # batch_loss.backward()
+                # optimizer.step()
+                
             # print("Updated Model weight norms:")
             # for name, param in model.named_parameters():
             #     print(name, param.data.norm())

@@ -74,13 +74,12 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         self.bceloss = nn.BCEWithLogitsLoss(reduction='mean')
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
         self.radius = radius
-        self.heatmap_weight = 0
+        self.heatmap_weight = heatmap_weight
         self.offset_weight = offset_weight
         self.use_target_weight = use_target_weight
         self.max_num_poses= max_num_poses
         
 
-    import torch.nn.functional as F
 
     def create_mask(self, ground_truth, threshold=0.1):
         # Threshold the ground truth heatmaps to create a binary mask
@@ -292,7 +291,6 @@ class PosenetDatasetImage(Dataset):
             heatmaps = self.heatmaps[idx]
             offset_vectors = self.offset_vectors[idx]
             
-            
             return input_image_tensor, draw_image, output_scale, filename, keypoints, heatmaps, offset_vectors
                 
         else:
@@ -338,15 +336,15 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
     # print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
     return ground_truth_offset_maps
 
-def write_keypoints_to_file(keypoints, epoch, file_name, pose_scores="", keypoint_scores=""):
-    with open(file_name, 'a') as f:
-        f.write(f"Epoch: {epoch}\n")
-        for pose_idx, pose in enumerate(keypoints):
-            for idx, keypoint in enumerate(pose): 
-                f.write(f"{idx}: {keypoint}\n")
-                f.write(f"keypoint score: {keypoint_scores[pose][idx]}")
-        f.write(f"pose score: " {pose_scores[pose_idx]}")
-        f.write("\n")  # Separate epochs with a new line
+# def write_keypoints_to_file(keypoints, epoch, file_name, pose_scores="", keypoint_scores=""):
+#     with open(file_name, 'a') as f:
+#         f.write(f"Epoch: {epoch}\n")
+#         for pose_idx, pose in enumerate(keypoints):
+#             for idx, keypoint in enumerate(pose): 
+#                 f.write(f"{idx}: {keypoint}\n")
+#                 f.write(f"keypoint score: {keypoint_scores[pose][idx]}")
+#         f.write(f"pose score: {pose_scores[pose_idx]}")
+#         f.write("\n")  # Separate epochs with a new line
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15):
     step = 0
@@ -402,7 +400,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
             for batch_idx, (data, draw_image, output_scale, filenames, ground_truth_keypoints, ground_truth_heatmaps, ground_truth_offsets) in enumerate(train_loader):
                 # print("ENUMERATE")
-            
+                
+                # Backward pass
+                optimizer.zero_grad()
                 # print("batch size: ", train_loader.batch_size)
             
                 data.cuda()
@@ -435,7 +435,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     train_heatmaps = item
                     
                     filename = filenames[item_idx]
-                    heatmaps_dir = "pred_heatmaps_training_offset_loss_only"
+                    heatmaps_dir = "pred_heatmaps_training"
                     
                     save_heatmaps(train_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir=heatmaps_dir, epoch=epoch)
                     
@@ -467,9 +467,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     if not os.path.exists(os.path.join('./keypoint_output_training', filename, output_dir_epoch)):
                         os.makedirs(os.path.join('./keypoint_output_training', filename, output_dir_epoch))
                     
-                    cv2.imwrite(os.path.join('./keypoint_output_training', filename, output_dir_epoch, filename + '_keypoints.jpg'), draw_image_with_kp)
+                    keypoint_output_dir = os.path.join('./keypoint_output_training', filename, output_dir_epoch, filename + '_keypoints.jpg')
+                
+                    cv2.imwrite(keypoint_output_dir, draw_image_with_kp)
 
-                    
+                    # write_keypoints_to_file(keypoint_coords, epoch, keypoint_output_dir, pose_scores, keypoint_scores)
+
                     # draw_coordinates_to_image_file(appended_text, train_image_path, output_dir_epoch, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
@@ -493,8 +496,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
 
 
-                    # Backward pass
-                    optimizer.zero_grad()
+                    
                     
                     print("loss shape: ", loss.shape)
 
@@ -529,8 +531,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     heatmap_loss_value = 0.0
                     offset_loss_value = 0.0
                 
-                # batch_loss.backward()
-                # optimizer.step()
+                batch_loss.backward()
+                optimizer.step()
                 
             # print("Updated Model weight norms:")
             # for name, param in model.named_parameters():
@@ -685,7 +687,7 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
 def main():
     # Set up training parameters
     batch_size = 2
-    learning_rate = 0.001
+    learning_rate = 0.0001
     num_epochs = 10
     max_num_poses = 10
 

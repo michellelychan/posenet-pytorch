@@ -75,12 +75,11 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         self.smoothl1loss = nn.SmoothL1Loss(reduction='none')
         self.radius = radius
         self.heatmap_weight = heatmap_weight
-        self.offset_weight = 0
+        self.offset_weight = offset_weight
         self.use_target_weight = use_target_weight
         self.max_num_poses= max_num_poses
         
 
-    import torch.nn.functional as F
 
     def create_mask(self, ground_truth, threshold=0.1):
         # Threshold the ground truth heatmaps to create a binary mask
@@ -108,6 +107,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             x, y = target_keypoints[k, 0], target_keypoints[k, 1]
             # print("x: ", x)
             # print("y: ", y)
+            
             if (x != 0 and x != -1) or (y != 0 and y != -1):
                 x, y = int(x.item()), int(y.item())
                 y_min, y_max = max(0, y - radius), min(binary_target_heatmaps.shape[1], y + radius + 1)
@@ -143,7 +143,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         pred_offsets = pred_offsets.view(1, 17, 2, 33, 33).permute(0, 1, 3, 4, 2)
         # print("pred_offsets_shape: ", pred_offsets.shape)
         ground_truth_offset_maps = create_ground_truth_offset_maps(target_keypoints, height=33, width=33, max_num_poses=max_num_poses)
-
+        
+        
 
         for pose in range(num_people):
             # Heatmap loss 
@@ -153,8 +154,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             
             pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
-
-#             print("pred_heatmaps shape: ", pred_heatmaps.shape)
+            
+            #             print("pred_heatmaps shape: ", pred_heatmaps.shape)
 #             print("binary_target_heatmaps shape: ", binary_target_heatmaps.shape)
 #             print("target_heatmaps shape: ", target_heatmaps.shape)
             
@@ -169,6 +170,8 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             mask = mask.unsqueeze(-1)
             
+            
+            
             print("&&&&loss&&&&")
             print("mask shape: ", mask.shape)
             print("ground_truth_offset_maps[pose] shape: ", ground_truth_offset_maps[pose].shape)
@@ -176,6 +179,7 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
             
             masked_true_offsets = ground_truth_offset_maps[pose] * mask
             masked_pred_offsets = pred_offsets * mask
+            
             
             offset_loss += self.smoothl1loss(masked_pred_offsets, masked_true_offsets).mean()
             print("in pose loop: offset_loss value: ", offset_loss)
@@ -287,7 +291,6 @@ class PosenetDatasetImage(Dataset):
             heatmaps = self.heatmaps[idx]
             offset_vectors = self.offset_vectors[idx]
             
-            
             return input_image_tensor, draw_image, output_scale, filename, keypoints, heatmaps, offset_vectors
                 
         else:
@@ -333,12 +336,26 @@ def create_ground_truth_offset_maps(ground_truth_keypoints, height, width, scale
     # print("ground_truth_offset_maps shape: ", ground_truth_offset_maps.shape)
     return ground_truth_offset_maps
 
+# def write_keypoints_to_file(keypoints, epoch, file_name, pose_scores="", keypoint_scores=""):
+#     with open(file_name, 'a') as f:
+#         f.write(f"Epoch: {epoch}\n")
+#         for pose_idx, pose in enumerate(keypoints):
+#             for idx, keypoint in enumerate(pose): 
+#                 f.write(f"{idx}: {keypoint}\n")
+#                 f.write(f"keypoint score: {keypoint_scores[pose][idx]}")
+#         f.write(f"pose score: {pose_scores[pose_idx]}")
+#         f.write("\n")  # Separate epochs with a new line
 
 def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, test_image_path, output_dir, scale_factor, is_train=True, max_num_poses=15):
     step = 0
     score_threshold = 0.25
     train_num_batches = len(train_loader)
 
+    # Initialize the early stopping variables
+    best_val_loss = float('inf')
+    patience = 10  # Number of epochs to wait for improvement before stopping
+    no_improve_epochs = 0
+    
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
@@ -360,10 +377,26 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
         # for name, param in model.named_parameters():
         #     print(name, param.data.norm())
 
-            
+        # with torch.no_grad():    
         if is_train:
             model.train()
             
+            for param in model.parameters():
+                param.requires_grad = False
+
+            # Unfreeze the output layers
+            for param in model.heatmap.parameters():
+                param.requires_grad = True
+
+            for param in model.offset.parameters():
+                param.requires_grad = True
+
+            for param in model.displacement_fwd.parameters():
+                param.requires_grad = True
+
+            for param in model.displacement_bwd.parameters():
+                param.requires_grad = True
+                
             print("---in training ---")
             
             print(train_loader)
@@ -372,7 +405,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
             for batch_idx, (data, draw_image, output_scale, filenames, ground_truth_keypoints, ground_truth_heatmaps, ground_truth_offsets) in enumerate(train_loader):
                 # print("ENUMERATE")
-            
+                
+                # Backward pass
+                optimizer.zero_grad()
                 # print("batch size: ", train_loader.batch_size)
             
                 data.cuda()
@@ -405,9 +440,12 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     train_heatmaps = item
                     
                     filename = filenames[item_idx]
-                    save_heatmaps(train_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir="pred_heatmaps_training_3", epoch=epoch)
-
-
+                    heatmaps_dir = "pred_heatmaps_training"
+                    
+                    save_heatmaps(train_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir=heatmaps_dir, epoch=epoch)
+                    
+                    
+                    
                     # print("item (heatmap) type: ", type(item))
                     
                     height = train_heatmaps.shape[1]
@@ -422,7 +460,25 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     appended_text = "train_" + str(epoch) + "_"
                     print("pose_scores shape: ", pose_scores.shape)
                     print("keypoint_scores shape: ", keypoint_scores.shape)
-                    draw_coordinates_to_image_file(appended_text, train_image_path, output_dir, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
+                    output_dir_epoch = "keypoints_output_" + str(epoch)
+                    
+                    print("draw_image")
+                    print(type(draw_image))
+                    print("draw_image[idx]: ", draw_image[item_idx].shape)
+                    print(draw_image.shape)
+                    draw_image_with_kp = posenet.draw_skel_and_kp(np.array(draw_image[item_idx]), pose_scores, keypoint_scores, keypoint_coords,
+                                                          min_pose_score=0.25, min_part_score=0.25)
+                    
+                    if not os.path.exists(os.path.join('./keypoint_output_training', filename, output_dir_epoch)):
+                        os.makedirs(os.path.join('./keypoint_output_training', filename, output_dir_epoch))
+                    
+                    keypoint_output_dir = os.path.join('./keypoint_output_training', filename, output_dir_epoch, filename + '_keypoints.jpg')
+                
+                    cv2.imwrite(keypoint_output_dir, draw_image_with_kp)
+
+                    # write_keypoints_to_file(keypoint_coords, epoch, keypoint_output_dir, pose_scores, keypoint_scores)
+
+                    # draw_coordinates_to_image_file(appended_text, train_image_path, output_dir_epoch, output_stride, scale_factor, pose_scores, keypoint_scores, keypoint_coords, filenames[item_idx], include_displacements=False)
 
                     decoded_offsets = torch.from_numpy(decoded_offsets)
                     decoded_offsets = decoded_offsets.to('cuda')
@@ -445,8 +501,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
 
 
-                    # Backward pass
-                    optimizer.zero_grad()
+                    
                     
                     print("loss shape: ", loss.shape)
 
@@ -483,6 +538,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 
                 batch_loss.backward()
                 optimizer.step()
+                
             # print("Updated Model weight norms:")
             # for name, param in model.named_parameters():
             #     print(name, param.data.norm())
@@ -552,13 +608,23 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             test_loss /= len(test_loader.dataset)
             test_loss_value = test_loss.item()
             
+            wandb.log({"test_loss": float(test_loss_value)}, step=step)
             print("test_loss_value: ", test_loss_value)
             print("step: ", step)
             
-            wandb.log({"test_loss": float(test_loss_value)}, step=step)
+            # Check for improvement
+            if test_loss_value < best_val_loss:
+                best_val_loss = test_loss_value
+                no_improve_epochs = 0
             
+            # Save best model so far
+            else:
+                no_improve_epochs += 1
+                if no_improve_epochs >= patience:
+                    print("Stopping training due to lack of improvement in validation loss.")
+                    break  # End training
             
-            
+
         # Log epoch duration
         print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(epoch+1, running_loss_value, test_loss_value))
                           
@@ -636,8 +702,8 @@ def decode_pose_from_batch_item(epoch, image_path, filename, item, offsets, scal
 def main():
     # Set up training parameters
     batch_size = 2
-    learning_rate = 0.001
-    num_epochs = 10
+    learning_rate = 0.0001
+    num_epochs = 100
     max_num_poses = 10
 
         

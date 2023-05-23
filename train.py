@@ -351,6 +351,11 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
     score_threshold = 0.25
     train_num_batches = len(train_loader)
 
+    # Initialize the early stopping variables
+    best_val_loss = float('inf')
+    patience = 10  # Number of epochs to wait for improvement before stopping
+    no_improve_epochs = 0
+    
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
@@ -603,13 +608,23 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             test_loss /= len(test_loader.dataset)
             test_loss_value = test_loss.item()
             
+            wandb.log({"test_loss": float(test_loss_value)}, step=step)
             print("test_loss_value: ", test_loss_value)
             print("step: ", step)
             
-            wandb.log({"test_loss": float(test_loss_value)}, step=step)
+            # Check for improvement
+            if test_loss_value < best_val_loss:
+                best_val_loss = test_loss_value
+                no_improve_epochs = 0
             
+            # Save best model so far
+            else:
+                no_improve_epochs += 1
+                if no_improve_epochs >= patience:
+                    print("Stopping training due to lack of improvement in validation loss.")
+                    break  # End training
             
-            
+
         # Log epoch duration
         print('Epoch: {} \tTrain Loss: {:.6f} \tTest Loss: {:.6f}'.format(epoch+1, running_loss_value, test_loss_value))
                           
@@ -688,7 +703,7 @@ def main():
     # Set up training parameters
     batch_size = 2
     learning_rate = 0.0001
-    num_epochs = 10
+    num_epochs = 100
     max_num_poses = 10
 
         

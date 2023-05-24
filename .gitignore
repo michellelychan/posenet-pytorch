@@ -1,0 +1,8 @@
+__pycache__/
+_models/
+output/
+posenet/__pycache__/
+posenet/converter/__pycache__/
+posenet/models/__pycache__/
+wandb/
+images_train/

@@ -25,6 +25,13 @@ from ground_truth_dataloop import *
 
 st.title('PoseNet Image Analyzer')
 
+
+def process_frame(frame, model, output_stride, output_scale):
+    input_image, draw_image, output_scale = posenet.process_input(frame, scale_factor=scale_factor, output_stride=output_stride)
+    # Run model on the frame
+    result = run_model(input_image, draw_image, model, output_stride, output_scale)
+    return result
+
 @st.cache_data()
 
 def load_model(model):
@@ -33,19 +40,47 @@ def load_model(model):
     return model
 
 def main():
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
-    model_number = st.sidebar.selectbox('Model', [50, 75, 100, 101])
+    model_number = st.sidebar.selectbox('Model', [101, 100, 75, 50])
     scale_factor = 1.0
     output_stride = st.sidebar.selectbox('Output Stride', [8, 16, 32, 64])
 
     model = load_model(model_number)
     output_stride = model.output_stride
 
-    option = st.sidebar.selectbox('Choose an option', ['Upload Image', 'Try existing image'])
+    option = st.sidebar.selectbox('Choose an option', ['Upload Image', 'Upload Video', 'Try existing image'])
     output_dir = st.sidebar.text_input('Output Directory', './output')
 
-    if option == 'Upload Image':
+    if option == 'Upload Video':
+        uploaded_video = st.sidebar.file_uploader("Upload a video (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
+        if uploaded_video is not None:
+            tfile = tempfile.NamedTemporaryFile(delete=False) 
+            tfile.write(uploaded_video.read())
+        
+            vidcap = cv2.VideoCapture(tfile.name)
+            success, image = vidcap.read()
+            frames = []
+            while success:
+                image = process_frame(image, model, output_stride, scale_factor)
+                frames.append(image)
+                success, image = vidcap.read()
+        
+            # Write the output video
+            output_file = 'output.mp4'
+            height, width, layers = frames[0].shape
+            size = (width,height)
+            out = cv2.VideoWriter(output_file, cv2.VideoWriter_fourcc(*'mp4v'), 15, size)
+
+            for i in range(len(frames)):
+                out.write(frames[i])
+            out.release()
+
+            video_file = open(output_file, 'rb')
+            video_bytes = video_file.read()
+            st.video(video_bytes)
+
+    elif option == 'Upload Image':
         image_file = st.sidebar.file_uploader("Upload Image (Max 10MB)", type=['png', 'jpg', 'jpeg'])
         
         if image_file is not None:

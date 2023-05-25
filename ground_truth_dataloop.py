@@ -36,7 +36,7 @@ def prepare_ground_truth_data(images_dir, keypoints_dir, num_keypoints=17, heatm
         # construct the paths to the image and keypoint files
         image_path = os.path.join(images_dir, image_file)
         keypoint_path = os.path.join(keypoints_dir, os.path.splitext(image_file)[0] + ".json")
-        
+        print("keypoint path: ", keypoint_path)
         print("=== IMAGE FILE ===")
         print(image_file)
         # check if the keypoint file exists
@@ -160,6 +160,8 @@ def generated_keypoints_from_heatmaps(heatmaps):
     
 def save_offset_vectors(offset_vectors, image_file, pose_idx, num_keypoints, heatmaps_dir):
     output_dir = os.path.join(heatmaps_dir, os.path.splitext(image_file)[0])
+    print("output_dir: ", output_dir)
+    os.makedirs(output_dir, exist_ok=True)
     offset_vectors_file = os.path.join(output_dir, os.path.splitext(image_file)[0] + f"_offset_vectors_pose_{pose_idx}.txt")
     np.savetxt(offset_vectors_file, offset_vectors[pose_idx], fmt="%f", delimiter=",")
 
@@ -227,6 +229,10 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
     
     with open(keypoint_path, "r") as f:
         data = json.load(f)
+        print("keypoint path: ", keypoint_path)
+        print("filename: ", f)
+        print("---data----")
+        print(data)
         
         annotations = data["annotations"]
         
@@ -242,7 +248,6 @@ def keypoint_path_to_heatmap_keypoints(keypoint_path, num_keypoints, heatmap_sha
         keypoints_list = []
         
         # Create a mapping from keypoint labels to their indices in constants.PART_NAMES
-        label_to_index
         
         label_to_index = {add_space_before_capital(name).lower(): i for i, name in enumerate(constants.PART_NAMES)}
         print("label_to_index: ", label_to_index)

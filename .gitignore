@@ -6,3 +6,10 @@ posenet/converter/__pycache__/
 posenet/models/__pycache__/
 wandb/
 images_train/
+heatmaps_train/
+images_test/
+keypoint_output_training/
+keypoints_updated/
+labels_train/
+pred_heatmaps_test/
+pred_heatmaps_training/

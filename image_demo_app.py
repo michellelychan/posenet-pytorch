@@ -5,6 +5,7 @@ import argparse
 import os
 import torch
 import posenet
+import tempfile
 from posenet.utils import *
 import streamlit as st
 from posenet.decode_multi import *
@@ -25,12 +26,9 @@ from ground_truth_dataloop import *
 
 st.title('PoseNet Image Analyzer')
 
-
-def process_frame(frame, model, output_stride, output_scale):
-    input_image, draw_image, output_scale = posenet.process_input(frame, scale_factor=scale_factor, output_stride=output_stride)
-    # Run model on the frame
-    result = run_model(input_image, draw_image, model, output_stride, output_scale)
-    return result
+def process_frame(frame, scale_factor, output_stride):
+    input_image, draw_image, output_scale = process_input(frame, scale_factor=scale_factor, output_stride=output_stride)
+    return input_image, draw_image, output_scale
 
 @st.cache_data()
 
@@ -62,8 +60,10 @@ def main():
             success, image = vidcap.read()
             frames = []
             while success:
-                image = process_frame(image, model, output_stride, scale_factor)
-                frames.append(image)
+                # image = process_frame(image, model, output_stride, output_scale, scale_factor)
+                input_image, draw_image, output_scale = process_frame(image, scale_factor, output_stride)
+                result_image = run_model(input_image, draw_image, model, output_stride, output_scale, output_dir)
+                frames.append(result_image)
                 success, image = vidcap.read()
         
             # Write the output video
@@ -164,21 +164,20 @@ def run_model(input_image, draw_image, model, output_stride, output_scale, outpu
                 draw_image, pose_scores, keypoint_scores, keypoint_coords,
                 min_pose_score=0.25, min_part_score=0.25)
         
-        if filename:
-            cv2.imwrite(os.path.join(output_dir, filename), draw_image)
-        else:
-            cv2.imwrite(os.path.join(output_dir, os.path.relpath(input_image, image_dir)), draw_image)
-
+            if filename:
+                cv2.imwrite(os.path.join(output_dir, filename), draw_image)
+            else:
+                cv2.imwrite(os.path.join(output_dir, "output.png"), draw_image)
         
-        st.image(draw_image, caption='PoseNet Output', use_column_width=True)
-        st.text("Results for image: %s" % filename)
+            st.image(draw_image, caption='PoseNet Output', use_column_width=True)
+            st.text("Results for image: %s" % filename)
 
-        for pi in range(len(pose_scores)):
-            if pose_scores[pi] == 0.:
-                break
-            st.text('Pose #%d, score = %f' % (pi, pose_scores[pi]))
-            for ki, (s, c) in enumerate(zip(keypoint_scores[pi, :], keypoint_coords[pi, :, :])):
-                st.text('Keypoint %s, score = %f, coord = %s' % (posenet.PART_NAMES[ki], s, c))
+            for pi in range(len(pose_scores)):
+                if pose_scores[pi] == 0.:
+                    break
+                st.text('Pose #%d, score = %f' % (pi, pose_scores[pi]))
+                for ki, (s, c) in enumerate(zip(keypoint_scores[pi, :], keypoint_coords[pi, :, :])):
+                    st.text('Keypoint %s, score = %f, coord = %s' % (posenet.PART_NAMES[ki], s, c))
 
 if __name__ == "__main__":
     main()

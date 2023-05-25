@@ -151,8 +151,6 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
                         
             binary_target_heatmaps[pose, :, :, :] = self.create_binary_target_heatmap(target_heatmaps[pose], target_keypoints[pose], self.radius)
             
-            
-            
             pose_heatmap_loss = self.bceloss(pred_heatmaps, binary_target_heatmaps[pose].float())
             
             #             print("pred_heatmaps shape: ", pred_heatmaps.shape)

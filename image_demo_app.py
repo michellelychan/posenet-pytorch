@@ -1,0 +1,149 @@
+#create a Streamlit app using info from image_demo.py
+import cv2
+import time
+import argparse
+import os
+import torch
+import posenet
+from posenet.utils import *
+import streamlit as st
+from posenet.decode_multi import *
+from visualizers import *
+from ground_truth_dataloop import *
+
+
+import cv2
+import time
+import argparse
+import os
+import torch
+import posenet
+import streamlit as st
+from posenet.decode_multi import *
+from visualizers import *
+from ground_truth_dataloop import *
+
+st.title('PoseNet Image Analyzer')
+
+@st.cache_data()
+
+def load_model(model):
+    model = posenet.load_model(model)
+    model = model.cuda()
+    return model
+
+def main():
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+    model_number = st.sidebar.selectbox('Model', [50, 75, 100, 101])
+    scale_factor = 1.0
+    output_stride = st.sidebar.selectbox('Output Stride', [8, 16, 32, 64])
+
+    model = load_model(model_number)
+    output_stride = model.output_stride
+
+    option = st.sidebar.selectbox('Choose an option', ['Upload Image', 'Try existing image'])
+    output_dir = st.sidebar.text_input('Output Directory', './output')
+
+    if option == 'Upload Image':
+        image_file = st.sidebar.file_uploader("Upload Image (Max 10MB)", type=['png', 'jpg', 'jpeg'])
+        
+        if image_file is not None:
+            if image_file.size > MAX_FILE_SIZE:
+                st.error("File size exceeds the 10MB limit. Please upload a smaller file.")
+            file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
+            input_image = cv2.imdecode(file_bytes, 1)
+            filename = image_file.name
+            # Crop the image here as needed
+            # input_image = input_image[y:y+h, x:x+w]
+            
+            input_image, source_image, output_scale = process_input(
+                input_image, scale_factor, output_stride)
+
+            run_model(input_image, source_image, model, output_stride, output_scale, output_dir, filename)
+
+        else:
+            st.sidebar.warning("Please upload an image.")
+
+   
+    
+    elif option == 'Try existing image':
+        image_dir = st.sidebar.text_input('Image Directory', './images_train')
+
+        if output_dir:
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+        filenames = [f.path for f in os.scandir(image_dir) if f.is_file() and f.path.endswith(('.png', '.jpg'))]
+
+        if filenames:
+            selected_image = st.sidebar.selectbox('Choose an image', filenames)
+
+            input_image, draw_image, output_scale = posenet.read_imgfile(
+                selected_image, scale_factor=scale_factor, output_stride=output_stride)
+
+            filename = os.path.basename(selected_image)
+            run_model(input_image, draw_image, model, output_stride, output_scale, output_dir, filename)
+        
+    else:
+        st.sidebar.warning("No images found in directory.")    
+
+#same as utils.py _process_input
+def process_input(source_img, scale_factor=1.0, output_stride=16):
+    target_width, target_height = posenet.valid_resolution(
+        source_img.shape[1] * scale_factor, source_img.shape[0] * scale_factor, output_stride=output_stride)
+    scale = np.array([source_img.shape[0] / target_height, source_img.shape[1] / target_width])
+    input_img = cv2.resize(source_img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+    input_img = cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB).astype(np.float32)
+    input_img = input_img * (2.0 / 255.0) - 1.0
+    input_img = input_img.transpose((2, 0, 1)).reshape(1, 3, target_height, target_width)
+    return input_img, source_img, scale
+    
+def run_model(input_image, draw_image, model, output_stride, output_scale, output_dir, filename=None):
+    with torch.no_grad():
+        input_image = torch.Tensor(input_image).cuda()
+
+        heatmaps_result, offsets_result, displacement_fwd_result, displacement_bwd_result = model(input_image)
+            
+        # st.text("model heatmaps_result shape: {}".format(heatmaps_result.shape))
+        # st.text("model offsets_result shape: {}".format(offsets_result.shape))
+
+        pose_scores, keypoint_scores, keypoint_coords, pose_offsets = posenet.decode_multi.decode_multiple_poses(
+            heatmaps_result.squeeze(0),
+            offsets_result.squeeze(0),
+            displacement_fwd_result.squeeze(0),
+            displacement_bwd_result.squeeze(0),
+            output_stride=output_stride,
+            max_pose_detections=10,
+            min_pose_score=0.0)
+
+        # st.text("decoded pose_scores shape: {}".format(pose_scores.shape))
+        # st.text("decoded pose_offsets shape: {}".format(pose_offsets.shape))
+
+        keypoint_coords *= output_scale
+
+        draw_image = cv2.cvtColor(draw_image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+
+        if output_dir:
+            draw_image = posenet.draw_skel_and_kp(
+                draw_image, pose_scores, keypoint_scores, keypoint_coords,
+                min_pose_score=0.25, min_part_score=0.25)
+        
+        if filename:
+            cv2.imwrite(os.path.join(output_dir, filename), draw_image)
+        else:
+            cv2.imwrite(os.path.join(output_dir, os.path.relpath(input_image, image_dir)), draw_image)
+
+        
+        st.image(draw_image, caption='PoseNet Output', use_column_width=True)
+        st.text("Results for image: %s" % filename)
+
+        for pi in range(len(pose_scores)):
+            if pose_scores[pi] == 0.:
+                break
+            st.text('Pose #%d, score = %f' % (pi, pose_scores[pi]))
+            for ki, (s, c) in enumerate(zip(keypoint_scores[pi, :], keypoint_coords[pi, :, :])):
+                st.text('Keypoint %s, score = %f, coord = %s' % (posenet.PART_NAMES[ki], s, c))
+
+if __name__ == "__main__":
+    main()

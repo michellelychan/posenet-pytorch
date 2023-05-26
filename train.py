@@ -275,24 +275,124 @@ def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
     return oks
 
 
-
-def calculate_precision(preds, gts):
-    matched_pairs = match_poses(preds, gts)
-    num_true_positives = len(matched_pairs)
-
-    # Create tensors for comparison
-    neg_one_tensor = torch.full_like(preds, -1)
-    zero_tensor = torch.zeros_like(preds)
+def calculate_precision(preds, gts, threshold = 2):
     
-    # Check if the predicted joint coordinates are greater than [-1, -1] AND not equal to [0, 0]
-    preds_mask = torch.logical_and(preds > neg_one_tensor, preds != zero_tensor)
-    num_predicted_joints = torch.sum(preds_mask).item()
+    """
+    Calculate the precision of predicted keypoints compared to ground truth keypoints.
+    A predicted keypoint is considered correct (true positive) if it is within 'threshold'
+    distance of a ground truth keypoint. Any predicted keypoint not within 'threshold'
+    distance of any ground truth keypoint is considered a false positive.
 
-    num_false_positives = num_predicted_joints - num_true_positives
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        threshold: The maximum distance for a predicted keypoint to be considered correct
+
+    Returns:
+        precision: The precision of the predictions
+    """
+        
+    num_true_positives = 0
+    num_false_positives = 0
+    
+    matched_pairs = match_poses(preds, gts)
+    
+    for pair in matched_pairs:
+        pred_idx, gt_idx = pair
+        pred_pose = normalize_keypoints(preds[pred_idx]).cpu().numpy()
+        gt_pose = normalize_keypoints(gts[gt_idx]).cpu().numpy()
+
+        
+        for pred_keypoint, gt_keypoint in zip(pred_pose, gt_pose):
+            # Skip keypoints with values (0,0) or (-1,-1) in ground truth keypoints
+            if np.all(gt_keypoint == [0, 0]) or np.all(gt_keypoint == [-1, -1]):
+                if np.all(pred_keypoint != [0, 0]) and np.all(pred_keypoint != [-1, -1]):
+                    # This is a false positive - predicted but not in ground truth
+                    num_false_positives += 1
+                    print("false positive by gt no point detected")
+                continue
+
+            # For predicted keypoints, count true positives and false positives
+            if np.linalg.norm(pred_keypoint - gt_keypoint) <= threshold:
+                num_true_positives += 1
+                print("true positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
+            else:
+                print("false positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
+                num_false_positives += 1
+
     precision = num_true_positives / (num_true_positives + num_false_positives)
+    
+    print("num_false_positives: ", num_false_positives)
+    print("num_true_positives: ", num_true_positives)
+    print("precision: ", precision)
+    
     return precision
 
 
+def calculate_recall(preds, gts, threshold=2.0):
+    """
+    Calculate recall for predicted keypoints against ground truth keypoints.
+
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        threshold: The maximum Euclidean distance between a predicted keypoint and a ground truth keypoint for the prediction to be considered correct.
+
+    Returns:
+        recall: The recall of the predicted keypoints.
+    """
+    matched_pairs = match_poses(preds, gts)
+    
+    num_true_positives = 0
+    num_false_negatives = 0
+
+    for pred_index, gt_index in matched_pairs:
+        pred_pose = normalize_keypoints(preds[pred_index]).cpu().numpy()
+        gt_pose = normalize_keypoints(gts[gt_index]).cpu().numpy()
+        
+
+        for pred_keypoint, gt_keypoint in zip(pred_pose, gt_pose):
+            
+            if (gt_keypoint == np.array([-1, -1])).all() or (gt_keypoint == np.array([0, 0])).all():
+                continue
+            elif (pred_keypoint == np.array([-1, -1])).all() or (pred_keypoint == np.array([0, 0])).all():
+                num_false_negatives += 1
+                print("false negative")
+            elif np.linalg.norm(pred_keypoint - gt_keypoint) <= threshold:
+                num_true_positives += 1
+                print("true positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint): ", np.linalg.norm(pred_keypoint - gt_keypoint))
+            else:
+                num_false_negatives += 1
+                print("false negative")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint): ", np.linalg.norm(pred_keypoint - gt_keypoint))
+
+    recall = num_true_positives / (num_true_positives + num_false_negatives)
+    print("num_true_positives: ", num_true_positives)
+    print("num_false_negatives: ", num_false_negatives)
+    print("recall: ", recall)
+    return recall
+
+
+
+def normalize_keypoints(keypoints):
+    """
+    Normalize keypoints by subtracting the mean and dividing by the standard deviation.
+
+    Args:
+        keypoints: Keypoints to normalize, a tensor of size (num_keypoints, 2)
+
+    Returns:
+        normalized_keypoints: Normalized keypoints
+    """
+    keypoints = keypoints.float()
+    mean = keypoints.mean(dim=0, keepdim=True)
+    std = keypoints.std(dim=0, keepdim=True)
+    normalized_keypoints = (keypoints - mean) / std
+
+    return normalized_keypoints
 
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, ground_truth_keypoints_dir=None, scale_factor=1.0, output_stride=16, train=True):
@@ -647,6 +747,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx])
                 print("precision: ", precision)
                 
+                recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx])
+                print("recall: ", recall)
+                
                 batch_loss.backward()
                 optimizer.step()
                 
@@ -709,6 +812,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     loss, heatmap_loss, offset_loss, _ = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx], max_num_poses=max_num_poses)
                     
                     save_heatmaps(test_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir="pred_heatmaps_test", epoch=epoch)
+                    
+                    
                     
                     test_loss += loss.item()
                     print("-inside test-")

@@ -32,6 +32,8 @@ from visualizers import *
 from scipy.optimize import linear_sum_assignment
 import wandb
 import torch.optim as optim
+import numpy as np
+
 
 os.environ["WANDB_NOTEBOOK_NAME"] = "./train_model_wandb.ipynb"
 
@@ -194,6 +196,104 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         return loss, heatmap_loss, offset_loss, binary_target_heatmaps
 
 
+def match_poses(preds, gts):
+    """
+    Match predicted poses to ground truth poses based on Euclidean distance of keypoints.
+
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+
+    Returns:
+        matched_pairs: List of pairs of indices (pred_index, gt_index) for matched poses
+    """
+    preds_cpu = preds.cpu().numpy()
+    gts_cpu = gts.cpu().numpy()
+    
+    # Compute pairwise distance between all preds and gts
+    cost_matrix = np.zeros((len(preds_cpu), len(gts_cpu)))
+    for i, pred in enumerate(preds_cpu):
+        for j, gt in enumerate(gts_cpu):
+            cost_matrix[i, j] = np.linalg.norm(pred - gt)
+
+    # Use Hungarian Algorithm to find optimal match
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+    # All pairs are considered as matched pairs
+    matched_pairs = list(zip(row_ind, col_ind))
+    
+    print("matched_pairs length: ", len(matched_pairs))
+    print(matched_pairs)
+
+    return matched_pairs
+    
+def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
+    """
+    Calculate Object Keypoint Similarity (OKS) for matched pairs.
+
+    Args:
+        matched_pairs: List of pairs of indices (pred_index, gt_index) for matched poses
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        sigmas: A numpy array of standard deviations for the positions of each keypoint
+        vars: A numpy array of the variances for each keypoint (typically, this is just square of sigmas)
+        image_size: The size of the image (height, width)
+
+    Returns:
+        oks: The OKS score
+    """
+    oks = 0
+    
+    preds_cpu = preds.cpu().numpy()
+    gts_cpu = gts.cpu().numpy()
+    
+    image_size = float(image_size)
+    preds_cpu = preds_cpu.astype(np.float64) / image_size
+    gts_cpu = gts_cpu.astype(np.float64) / image_size
+    
+    # Normalize keypoints
+    preds_cpu /= image_size
+    gts_cpu /= image_size
+    
+    for i, j in matched_pairs:
+        print("sigmas: ", sigmas)
+        print("variances: ", variances)
+        # Euclidean distance between predicted and ground truth keypoints
+        d = np.linalg.norm(preds_cpu[i] - gts_cpu[j])
+        print("d: ", d)
+        
+        exp = np.exp(-d**2 / (2 * variances * (sigmas**2)))
+        print("exp: ", exp)
+        # Compute OKS for each keypoint and sum them up
+        oks += np.sum( exp / len(preds_cpu[i]))
+        
+    # Average OKS over all matched pairs
+    oks /= len(matched_pairs)
+    
+    print("oks: ", oks)
+
+    return oks
+
+
+
+def calculate_precision(preds, gts):
+    matched_pairs = match_poses(preds, gts)
+    num_true_positives = len(matched_pairs)
+
+    # Create tensors for comparison
+    neg_one_tensor = torch.full_like(preds, -1)
+    zero_tensor = torch.zeros_like(preds)
+    
+    # Check if the predicted joint coordinates are greater than [-1, -1] AND not equal to [0, 0]
+    preds_mask = torch.logical_and(preds > neg_one_tensor, preds != zero_tensor)
+    num_predicted_joints = torch.sum(preds_mask).item()
+
+    num_false_positives = num_predicted_joints - num_true_positives
+    precision = num_true_positives / (num_true_positives + num_false_positives)
+    return precision
+
+
+
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, ground_truth_keypoints_dir=None, scale_factor=1.0, output_stride=16, train=True):
         self.file_path = file_path
@@ -354,6 +454,11 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
     patience = 10  # Number of epochs to wait for improvement before stopping
     no_improve_epochs = 0
     
+    # TODO : find the sigmas and variances of the dataset 
+    # typically it is given by COCO Dataset 
+    sigmas = np.ones(17)
+    variances = sigmas**2
+    
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
@@ -398,6 +503,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             print("---in training ---")
             
             print(train_loader)
+            
         
             # print("train loader: ", next(iter(train_loader)))
 
@@ -497,9 +603,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print(train_heatmaps.shape)
                     print(binary_target_heatmaps.shape)
                     
-
-
-                    
                     
                     print("loss shape: ", loss.shape)
 
@@ -507,8 +610,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
 
                     print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
                           .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.mean().item()))
-                    
-                    
                     
                     running_loss_value += loss.item()
                     heatmap_loss_value += heatmap_loss.item()
@@ -533,6 +634,18 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     running_loss_value = 0.0
                     heatmap_loss_value = 0.0
                     offset_loss_value = 0.0
+                    
+                # calculate accuracy 
+                matched_pairs = match_poses(keypoint_coords, ground_truth_keypoints[item_idx])
+                print("matched_pairs shape: ")
+                print(matched_pairs)
+                
+                image_size = draw_image.shape[1]
+                
+                oks = calculate_oks(matched_pairs, keypoint_coords, ground_truth_keypoints[item_idx], sigmas, variances, image_size)
+                
+                precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx])
+                print("precision: ", precision)
                 
                 batch_loss.backward()
                 optimizer.step()
@@ -749,8 +862,6 @@ def main():
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-        
         
         train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, train_image_path, output_dir, scale_factor, is_train)
 

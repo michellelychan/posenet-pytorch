@@ -13,3 +13,14 @@ keypoints_updated/
 labels_train/
 pred_heatmaps_test/
 pred_heatmaps_training/
+heatmaps/
+heatmaps_2/
+binary_target_heatmaps_training/
+labels_train_old/
+posenet/.ipynb_checkpoints/
+posenet/converter/.ipynb_checkpoints/
+posenet/models/.ipynb_checkpoints/
+pred_heatmaps_training_2/
+pred_heatmaps_training_heatmap_loss_only/
+pred_heatmaps_training_offset_loss_only/
+.ipynb_checkpoints/

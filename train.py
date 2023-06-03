@@ -394,6 +394,39 @@ def normalize_keypoints(keypoints):
 
     return normalized_keypoints
 
+def calculate_mAP(precisions, recalls):
+    """
+    Calculate the Mean Average Precision (mAP).
+
+    Args:
+        precisions: List of precision values
+        recalls: List of recall values
+
+    Returns:
+        mAP: The Mean Average Precision
+    """
+
+    # Sort by recall
+    sorted_indices = np.argsort(recalls)
+    sorted_precisions = precisions[sorted_indices]
+    sorted_recalls = recalls[sorted_indices]
+    
+    # Append sentinel values at the end
+    sorted_precisions = np.concatenate(([0], sorted_precisions, [0]))
+    sorted_recalls = np.concatenate(([0], sorted_recalls, [1]))
+
+    # Compute the precision envelope
+    for i in range(sorted_precisions.size - 1, 0, -1):
+        sorted_precisions[i - 1] = max(sorted_precisions[i - 1], sorted_precisions[i])
+
+    # Compute Average Precision (AP)
+    recall_change = np.diff(sorted_recalls)
+    precision_change = sorted_precisions[:-1]
+    AP = np.sum(recall_change * precision_change)
+
+    return AP
+
+
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, ground_truth_keypoints_dir=None, scale_factor=1.0, output_stride=16, train=True):
         self.file_path = file_path
@@ -744,11 +777,38 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 
                 oks = calculate_oks(matched_pairs, keypoint_coords, ground_truth_keypoints[item_idx], sigmas, variances, image_size)
                 
-                precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx])
-                print("precision: ", precision)
+                thresholds = np.linspace(0.0, 10.0, num=50)
+                precisions = []
+                recalls = []
+                for i, threshold in enumerate(thresholds):
+                    precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                    print("precision: ", precision)
+                    recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                    print("recall: ", recall)
+                    precisions.append(precision)
+                    recalls.append(recall)
+                    
+                    # wandb.log({"epoch": epoch, f"precision_{i}": precision, f"recall_{i}": recall})
                 
-                recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx])
-                print("recall: ", recall)
+                mAP = calculate_mAP(np.array(precisions), np.array(recalls))
+                print("mAP: ", mAP)
+                
+                keys=[f"Threshold {threshold}" for threshold in thresholds]
+
+                print(type(precisions)) # should be <class 'list'>
+                print(type(precisions[0])) # should be <class 'float'>
+                print(type(recalls)) # should be <class 'list'>
+                print(type(recalls[0])) # should be <class 'float'>
+                
+                keys=["Average Precision"]
+                
+                wandb.log({"precision-recall_{filename}" : wandb.plot.line_series(
+                       xs=[recalls], 
+                       ys=[precisions],
+                       keys=keys,
+                       title="precision-recall",
+                       xname="recalls")})
+
                 
                 batch_loss.backward()
                 optimizer.step()

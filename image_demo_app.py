@@ -50,6 +50,7 @@ def main():
     output_dir = st.sidebar.text_input('Output Directory', './output')
 
     if option == 'Upload Video':
+
         uploaded_video = st.sidebar.file_uploader("Upload a video (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
         if uploaded_video is not None:
             tfile = tempfile.NamedTemporaryFile(delete=False) 
@@ -58,48 +59,43 @@ def main():
             vidcap = cv2.VideoCapture(tfile.name)
             success, image = vidcap.read()
             frames = []
+            frames_with_keypoints = []
             frame_count = 0
-            
-
+        
             while success:
-                # image = process_frame(image, model, output_stride, output_scale, scale_factor)
                 input_image, draw_image, output_scale = process_frame(image, scale_factor, output_stride)
                 result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, draw_image, model, output_stride, output_scale)
-                # print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename)
-                
-                if result_image is not None:
+
+                result_image_with_keypoints = print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir)
+
+                if result_image_with_keypoints is not None and result_image is not None:
+                    
                     frames.append(result_image)
+                    frames_with_keypoints.append(result_image_with_keypoints)
+                    
                     success, image = vidcap.read()
                     frame_count += 1
-                else:
-                    st.text("Failed to process a frame.")
-            
-            progress_bar = st.progress(0)
-                
-            # Write the output video
-            output_file = 'output.mp4'
-            height, width, layers = frames[0].shape
-            size = (width,height)
-            out = cv2.VideoWriter(os.path.join(output_dir, output_file), cv2.VideoWriter_fourcc(*'mp4v'), 15, size)
 
-            for i in range(len(frames)):
-                progress_percentage = i / len(frames)
-                progress_bar.progress(progress_percentage)
-                out.write(frames[i])
-            
-            video_file = open(os.path.join(output_dir, output_file), 'rb')
-            video_bytes = video_file.read()
-            st.video(video_bytes)
-            
             if frames:
                 frame_idx = st.slider('Choose a frame', 0, len(frames) - 1, 0)
-                st.image(frames[frame_idx], caption=f'Frame {frame_idx + 1}', use_column_width=True)
-
-            progress_bar.progress(1.0)
-            out.release()
-
-
+                input_image, draw_image, output_scale = process_frame(frames[frame_idx], scale_factor, output_stride)
+                result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, draw_image, model, output_stride, output_scale)
             
+                # Store pose coordinates for each processed frame
+                pose_data = {
+                    'pose_scores': pose_scores.tolist(),
+                    'keypoint_scores': keypoint_scores.tolist(),
+                    'keypoint_coords': keypoint_coords.tolist()
+                }
+
+                # Print pose data
+                
+
+                if result_image is not None:
+                    st.image(result_image, caption=f'Frame {frame_idx + 1}', use_column_width=True)
+                    st.write(pose_data)
+                else:
+                    st.text("Failed to process the frame.")
 
     elif option == 'Upload Image':
         image_file = st.sidebar.file_uploader("Upload Image (Max 10MB)", type=['png', 'jpg', 'jpeg'])

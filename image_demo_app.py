@@ -12,7 +12,6 @@ from posenet.decode_multi import *
 from visualizers import *
 from ground_truth_dataloop import *
 
-
 import cv2
 import time
 import argparse
@@ -88,6 +87,8 @@ def main():
                 progress_bar.progress(progress_percentage)
                 out.write(frames[i])
             
+            video_file = open(os.path.join(output_dir, output_file), 'rb')
+            video_bytes = video_file.read()
             st.video(video_bytes)
             
             if frames:
@@ -97,8 +98,7 @@ def main():
             progress_bar.progress(1.0)
             out.release()
 
-            video_file = open(output_file, 'rb')
-            video_bytes = video_file.read()
+
             
 
     elif option == 'Upload Image':

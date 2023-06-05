@@ -32,6 +32,8 @@ from visualizers import *
 from scipy.optimize import linear_sum_assignment
 import wandb
 import torch.optim as optim
+import numpy as np
+
 
 os.environ["WANDB_NOTEBOOK_NAME"] = "./train_model_wandb.ipynb"
 
@@ -194,6 +196,238 @@ class MultiPersonHeatmapOffsetAggregationLoss(nn.Module):
         return loss, heatmap_loss, offset_loss, binary_target_heatmaps
 
 
+def match_poses(preds, gts):
+    """
+    Match predicted poses to ground truth poses based on Euclidean distance of keypoints.
+
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+
+    Returns:
+        matched_pairs: List of pairs of indices (pred_index, gt_index) for matched poses
+    """
+    preds_cpu = preds.cpu().numpy()
+    gts_cpu = gts.cpu().numpy()
+    
+    # Compute pairwise distance between all preds and gts
+    cost_matrix = np.zeros((len(preds_cpu), len(gts_cpu)))
+    for i, pred in enumerate(preds_cpu):
+        for j, gt in enumerate(gts_cpu):
+            cost_matrix[i, j] = np.linalg.norm(pred - gt)
+
+    # Use Hungarian Algorithm to find optimal match
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+    # All pairs are considered as matched pairs
+    matched_pairs = list(zip(row_ind, col_ind))
+    
+    print("matched_pairs length: ", len(matched_pairs))
+    print(matched_pairs)
+
+    return matched_pairs
+    
+def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
+    """
+    Calculate Object Keypoint Similarity (OKS) for matched pairs.
+
+    Args:
+        matched_pairs: List of pairs of indices (pred_index, gt_index) for matched poses
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        sigmas: A numpy array of standard deviations for the positions of each keypoint
+        vars: A numpy array of the variances for each keypoint (typically, this is just square of sigmas)
+        image_size: The size of the image (height, width)
+
+    Returns:
+        oks: The OKS score
+    """
+    oks = 0
+    
+    preds_cpu = preds.cpu().numpy()
+    gts_cpu = gts.cpu().numpy()
+    
+    image_size = float(image_size)
+    preds_cpu = preds_cpu.astype(np.float64)
+    gts_cpu = gts_cpu.astype(np.float64)
+    
+    # Normalize keypoints
+    preds_cpu /= image_size
+    gts_cpu /= image_size
+    
+    for i, j in matched_pairs:
+        print("sigmas: ", sigmas)
+        print("variances: ", variances)
+        # Euclidean distance between predicted and ground truth keypoints
+        d = np.linalg.norm(preds_cpu[i] - gts_cpu[j])
+        print("d: ", d)
+        
+        exp = np.exp(-d**2 / (2 * variances * (sigmas**2)))
+        print("exp: ", exp)
+        # Compute OKS for each keypoint and sum them up
+        oks += np.sum( exp / len(preds_cpu[i]))
+        
+    # Average OKS over all matched pairs
+    oks = len(matched_pairs) if len(matched_pairs) > 0 else 0
+    
+    print("oks: ", oks)
+
+    return oks
+
+
+def calculate_precision(preds, gts, threshold = 2):
+    
+    """
+    Calculate the precision of predicted keypoints compared to ground truth keypoints.
+    A predicted keypoint is considered correct (true positive) if it is within 'threshold'
+    distance of a ground truth keypoint. Any predicted keypoint not within 'threshold'
+    distance of any ground truth keypoint is considered a false positive.
+
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        threshold: The maximum distance for a predicted keypoint to be considered correct
+
+    Returns:
+        precision: The precision of the predictions
+    """
+        
+    num_true_positives = 0
+    num_false_positives = 0
+    
+    matched_pairs = match_poses(preds, gts)
+    
+    for pair in matched_pairs:
+        pred_idx, gt_idx = pair
+        pred_pose = normalize_keypoints(preds[pred_idx]).cpu().numpy()
+        gt_pose = normalize_keypoints(gts[gt_idx]).cpu().numpy()
+
+        
+        for pred_keypoint, gt_keypoint in zip(pred_pose, gt_pose):
+            # Skip keypoints with values (0,0) or (-1,-1) in ground truth keypoints
+            if np.all(gt_keypoint == [0, 0]) or np.all(gt_keypoint == [-1, -1]):
+                if np.all(pred_keypoint != [0, 0]) and np.all(pred_keypoint != [-1, -1]):
+                    # This is a false positive - predicted but not in ground truth
+                    num_false_positives += 1
+                    print("false positive by gt no point detected")
+                continue
+
+            # For predicted keypoints, count true positives and false positives
+            if np.linalg.norm(pred_keypoint - gt_keypoint) <= threshold:
+                num_true_positives += 1
+                print("true positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
+            else:
+                print("false positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
+                num_false_positives += 1
+
+    precision = num_true_positives / (num_true_positives + num_false_positives) if num_false_positives + num_false_positives == 0 else 0
+    
+    
+    print("num_false_positives: ", num_false_positives)
+    print("num_true_positives: ", num_true_positives)
+    print("precision: ", precision)
+    
+    return precision
+
+
+def calculate_recall(preds, gts, threshold=2.0):
+    """
+    Calculate recall for predicted keypoints against ground truth keypoints.
+
+    Args:
+        preds: Predicted keypoints, a numpy array of size (num_preds, num_keypoints, 2)
+        gts: Ground truth keypoints, a numpy array of size (num_gts, num_keypoints, 2)
+        threshold: The maximum Euclidean distance between a predicted keypoint and a ground truth keypoint for the prediction to be considered correct.
+
+    Returns:
+        recall: The recall of the predicted keypoints.
+    """
+    matched_pairs = match_poses(preds, gts)
+    
+    num_true_positives = 0
+    num_false_negatives = 0
+
+    for pred_index, gt_index in matched_pairs:
+        pred_pose = normalize_keypoints(preds[pred_index]).cpu().numpy()
+        gt_pose = normalize_keypoints(gts[gt_index]).cpu().numpy()
+        
+
+        for pred_keypoint, gt_keypoint in zip(pred_pose, gt_pose):
+            
+            if (gt_keypoint == np.array([-1, -1])).all() or (gt_keypoint == np.array([0, 0])).all():
+                continue
+            elif (pred_keypoint == np.array([-1, -1])).all() or (pred_keypoint == np.array([0, 0])).all():
+                num_false_negatives += 1
+                print("false negative")
+            elif np.linalg.norm(pred_keypoint - gt_keypoint) <= threshold:
+                num_true_positives += 1
+                print("true positive")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint): ", np.linalg.norm(pred_keypoint - gt_keypoint))
+            else:
+                num_false_negatives += 1
+                print("false negative")
+                print("np.linalg.norm(pred_keypoint - gt_keypoint): ", np.linalg.norm(pred_keypoint - gt_keypoint))
+
+    recall = num_true_positives / (num_true_positives + num_false_negatives)
+    print("num_true_positives: ", num_true_positives)
+    print("num_false_negatives: ", num_false_negatives)
+    print("recall: ", recall)
+    return recall
+
+
+
+def normalize_keypoints(keypoints):
+    """
+    Normalize keypoints by subtracting the mean and dividing by the standard deviation.
+
+    Args:
+        keypoints: Keypoints to normalize, a tensor of size (num_keypoints, 2)
+
+    Returns:
+        normalized_keypoints: Normalized keypoints
+    """
+    keypoints = keypoints.float()
+    mean = keypoints.mean(dim=0, keepdim=True)
+    std = keypoints.std(dim=0, keepdim=True)
+    normalized_keypoints = (keypoints - mean) / std
+
+    return normalized_keypoints
+
+def calculate_mAP(precisions, recalls):
+    """
+    Calculate the Mean Average Precision (mAP).
+
+    Args:
+        precisions: List of precision values
+        recalls: List of recall values
+
+    Returns:
+        mAP: The Mean Average Precision
+    """
+
+    # Sort by recall
+    sorted_indices = np.argsort(recalls)
+    sorted_precisions = precisions[sorted_indices]
+    sorted_recalls = recalls[sorted_indices]
+    
+    # Append sentinel values at the end
+    sorted_precisions = np.concatenate(([0], sorted_precisions, [0]))
+    sorted_recalls = np.concatenate(([0], sorted_recalls, [1]))
+
+    # Compute the precision envelope
+    for i in range(sorted_precisions.size - 1, 0, -1):
+        sorted_precisions[i - 1] = max(sorted_precisions[i - 1], sorted_precisions[i])
+
+    # Compute Average Precision (AP)
+    recall_change = np.diff(sorted_recalls)
+    precision_change = sorted_precisions[:-1]
+    AP = np.sum(recall_change * precision_change)
+
+    return AP
+
+
 class PosenetDatasetImage(Dataset):
     def __init__(self, file_path, ground_truth_keypoints_dir=None, scale_factor=1.0, output_stride=16, train=True):
         self.file_path = file_path
@@ -354,6 +588,13 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
     patience = 10  # Number of epochs to wait for improvement before stopping
     no_improve_epochs = 0
     
+    # TODO : find the sigmas and variances of the dataset 
+    # typically it is given by COCO Dataset 
+    # sigmas = np.ones(17)
+    
+    sigmas = np.array([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62,.62, 1.07, 1.07, .87, .87, .89, .89])
+    variances = sigmas**2
+    
     for epoch in range(num_epochs):
         
         epoch_start_time = time.time()
@@ -398,6 +639,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
             print("---in training ---")
             
             print(train_loader)
+            
         
             # print("train loader: ", next(iter(train_loader)))
 
@@ -418,6 +660,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 
                 
                 batch_loss = 0
+                batch_mAP = 0
+                batch_oks = 0
                 
                 #heatmap tensor = output[0] 
                 #heatmap size is num of images x 17 keypoints x resolution x resolution 
@@ -497,9 +741,6 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print(train_heatmaps.shape)
                     print(binary_target_heatmaps.shape)
                     
-
-
-                    
                     
                     print("loss shape: ", loss.shape)
 
@@ -508,31 +749,70 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     print('[Train] Epoch [{}/{}], Batch [{}/{}], Item [{}/{}], Loss: {:.4f}'
                           .format(epoch+1, num_epochs, batch_idx+1, len(train_loader), item_idx+1, output[0].shape[0], loss.mean().item()))
                     
-                    
-                    
                     running_loss_value += loss.item()
                     heatmap_loss_value += heatmap_loss.item()
                     offset_loss_value += offset_loss.item()
                     
                     #todo change the loss
                     batch_loss += loss
+
+                    # calculate accuracy 
+                    matched_pairs = match_poses(keypoint_coords, ground_truth_keypoints[item_idx])
+                    print("matched_pairs shape: ")
+                    print(matched_pairs)
+                
+                    image_size = draw_image.shape[1]
+                
+                    oks = calculate_oks(matched_pairs, keypoint_coords, ground_truth_keypoints[item_idx], sigmas, variances, image_size)
+                
+                    thresholds = np.linspace(0.0, 10.0, num=50)
+                    precisions = []
+                    recalls = []
+                    for i, threshold in enumerate(thresholds):
+                        precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                        print("precision: ", precision)
+                        recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                        print("recall: ", recall)
+                        precisions.append(precision)
+                        recalls.append(recall)
+
+                    
+                    # wandb.log({"epoch": epoch, f"precision_{i}": precision, f"recall_{i}": recall})
+                
+                    mAP = calculate_mAP(np.array(precisions), np.array(recalls))                    
+                    batch_mAP += mAP
+                    batch_oks += oks
+            
                     
                 batch_loss = batch_loss / len(train_loader)
                 running_loss_value = running_loss_value / len(train_loader)
                 offset_loss_value = offset_loss_value / len(train_loader)
                 heatmap_loss_value = heatmap_loss_value / len(train_loader)
-                
+
+
                 if batch_idx % batch_checkpoint == batch_checkpoint-1:
                     step += 1
                     print("--in batch checkpoint--")
                     print("train_loss: ", running_loss_value / batch_checkpoint)
                     print("heatmap_loss: ", heatmap_loss_value / batch_checkpoint)
                     print("offset_loss: ", offset_loss_value / batch_checkpoint)
-                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "heatmap_loss": heatmap_loss_value / batch_checkpoint, "offset_loss": offset_loss_value / batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
+                    print("mAP: ", batch_mAP / batch_checkpoint)
+                    print("oks: ", batch_oks / batch_checkpoint)
+                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "heatmap_loss": heatmap_loss_value / batch_checkpoint, "offset_loss": offset_loss_value / batch_checkpoint, "mAP": batch_mAP / batch_checkpoint, "oks": batch_oks/batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
                     print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss_value / batch_checkpoint))
                     running_loss_value = 0.0
                     heatmap_loss_value = 0.0
                     offset_loss_value = 0.0
+                    
+
+                print(type(precisions)) # should be <class 'list'>
+                print(type(precisions[0])) # should be <class 'float'>
+                print(type(recalls)) # should be <class 'list'>
+                print(type(recalls[0])) # should be <class 'float'>
+                
+                
+                
+
                 
                 batch_loss.backward()
                 optimizer.step()
@@ -596,6 +876,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     loss, heatmap_loss, offset_loss, _ = criterion(test_heatmaps, ground_truth_heatmaps[item_idx], ground_truth_keypoints[item_idx], offsets, ground_truth_offsets[item_idx], max_num_poses=max_num_poses)
                     
                     save_heatmaps(test_heatmaps.detach().cpu().numpy(), filename, 0, num_keypoints=17, heatmaps_dir="pred_heatmaps_test", epoch=epoch)
+                    
+                    
                     
                     test_loss += loss.item()
                     print("-inside test-")
@@ -749,8 +1031,6 @@ def main():
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-        
         
         train(model, train_loader, test_loader, criterion, optimizer, num_epochs, output_stride, train_image_path, train_image_path, output_dir, scale_factor, is_train)
 

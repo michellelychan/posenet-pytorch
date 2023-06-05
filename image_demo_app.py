@@ -130,8 +130,6 @@ def main():
         else:
             st.sidebar.warning("Please upload an image.")
 
-   
-    
     elif option == 'Try existing image':
         image_dir = st.sidebar.text_input('Image Directory', './images_train')
 

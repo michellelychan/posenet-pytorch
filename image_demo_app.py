@@ -60,7 +60,7 @@ def main():
             success, image = vidcap.read()
             frames = []
             frame_count = 0
-            st.text("Upload success")
+            
 
             while success:
                 # image = process_frame(image, model, output_stride, output_scale, scale_factor)
@@ -72,7 +72,6 @@ def main():
                     frames.append(result_image)
                     success, image = vidcap.read()
                     frame_count += 1
-                    st.text(f"Appending frame: {frame_count}")
                 else:
                     st.text("Failed to process a frame.")
             
@@ -88,9 +87,8 @@ def main():
                 progress_percentage = i / len(frames)
                 progress_bar.progress(progress_percentage)
                 out.write(frames[i])
-                st.text(f"writing video for frame: {i}")
             
-            
+            st.video(video_bytes)
             
             if frames:
                 frame_idx = st.slider('Choose a frame', 0, len(frames) - 1, 0)
@@ -99,15 +97,8 @@ def main():
             progress_bar.progress(1.0)
             out.release()
 
-            if os.path.exists(os.path.join(output_dir, output_file)):
-                video_file = open(os.path.join(output_dir, output_file), 'rb')
-            else:
-                st.error('Video file not found')
-
-            # video_file = open(output_file, 'rb')
+            video_file = open(output_file, 'rb')
             video_bytes = video_file.read()
-
-            st.video(video_bytes)
             
 
     elif option == 'Upload Image':
@@ -125,11 +116,13 @@ def main():
             input_image, source_image, output_scale = process_input(
                 input_image, scale_factor, output_stride)
 
-            result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, source_image, model, output_stride, output_scale, output_dir, filename)
+            result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, source_image, model, output_stride, output_scale)
             print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=filename)
         else:
             st.sidebar.warning("Please upload an image.")
 
+   
+    
     elif option == 'Try existing image':
         image_dir = st.sidebar.text_input('Image Directory', './images_train')
 
@@ -164,7 +157,8 @@ def process_input(source_img, scale_factor=1.0, output_stride=16):
     input_img = input_img.transpose((2, 0, 1)).reshape(1, 3, target_height, target_width)
     return input_img, source_img, scale
     
-def run_model(input_image, draw_image, model, output_stride, output_scale, output_dir, filename=None):
+def run_model(input_image, draw_image, model, output_stride, output_scale):
+
     with torch.no_grad():
         input_image = torch.Tensor(input_image).cuda()
 
@@ -189,7 +183,9 @@ def run_model(input_image, draw_image, model, output_stride, output_scale, outpu
 
         draw_image = cv2.cvtColor(draw_image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
 
+        return draw_image, pose_scores, keypoint_scores, keypoint_coords
 
+def print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=None):
         if output_dir:
             draw_image = posenet.draw_skel_and_kp(
                 draw_image, pose_scores, keypoint_scores, keypoint_coords,
@@ -209,8 +205,6 @@ def run_model(input_image, draw_image, model, output_stride, output_scale, outpu
                 st.text('Pose #%d, score = %f' % (pi, pose_scores[pi]))
                 for ki, (s, c) in enumerate(zip(keypoint_scores[pi, :], keypoint_coords[pi, :, :])):
                     st.text('Keypoint %s, score = %f, coord = %s' % (posenet.PART_NAMES[ki], s, c))
-
-            return draw_image, pose_scores, keypoint_scores, keypoint_coords
 
 if __name__ == "__main__":
     main()

@@ -248,8 +248,8 @@ def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
     gts_cpu = gts.cpu().numpy()
     
     image_size = float(image_size)
-    preds_cpu = preds_cpu.astype(np.float64) / image_size
-    gts_cpu = gts_cpu.astype(np.float64) / image_size
+    preds_cpu = preds_cpu.astype(np.float64)
+    gts_cpu = gts_cpu.astype(np.float64)
     
     # Normalize keypoints
     preds_cpu /= image_size
@@ -268,7 +268,7 @@ def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
         oks += np.sum( exp / len(preds_cpu[i]))
         
     # Average OKS over all matched pairs
-    oks /= len(matched_pairs)
+    oks = len(matched_pairs) if len(matched_pairs) > 0 else 0
     
     print("oks: ", oks)
 
@@ -322,7 +322,8 @@ def calculate_precision(preds, gts, threshold = 2):
                 print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
                 num_false_positives += 1
 
-    precision = num_true_positives / (num_true_positives + num_false_positives)
+    precision = num_true_positives / (num_true_positives + num_false_positives) if num_false_positives + num_false_positives == 0 else 0
+    
     
     print("num_false_positives: ", num_false_positives)
     print("num_true_positives: ", num_true_positives)
@@ -589,7 +590,9 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
     
     # TODO : find the sigmas and variances of the dataset 
     # typically it is given by COCO Dataset 
-    sigmas = np.ones(17)
+    # sigmas = np.ones(17)
+    
+    sigmas = np.array([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62,.62, 1.07, 1.07, .87, .87, .89, .89])
     variances = sigmas**2
     
     for epoch in range(num_epochs):
@@ -657,6 +660,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                 
                 
                 batch_loss = 0
+                batch_mAP = 0
+                batch_oks = 0
                 
                 #heatmap tensor = output[0] 
                 #heatmap size is num of images x 17 keypoints x resolution x resolution 
@@ -750,64 +755,63 @@ def train(model, train_loader, test_loader, criterion, optimizer, num_epochs, ou
                     
                     #todo change the loss
                     batch_loss += loss
+
+                    # calculate accuracy 
+                    matched_pairs = match_poses(keypoint_coords, ground_truth_keypoints[item_idx])
+                    print("matched_pairs shape: ")
+                    print(matched_pairs)
+                
+                    image_size = draw_image.shape[1]
+                
+                    oks = calculate_oks(matched_pairs, keypoint_coords, ground_truth_keypoints[item_idx], sigmas, variances, image_size)
+                
+                    thresholds = np.linspace(0.0, 10.0, num=50)
+                    precisions = []
+                    recalls = []
+                    for i, threshold in enumerate(thresholds):
+                        precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                        print("precision: ", precision)
+                        recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
+                        print("recall: ", recall)
+                        precisions.append(precision)
+                        recalls.append(recall)
+
+                    
+                    # wandb.log({"epoch": epoch, f"precision_{i}": precision, f"recall_{i}": recall})
+                
+                    mAP = calculate_mAP(np.array(precisions), np.array(recalls))                    
+                    batch_mAP += mAP
+                    batch_oks += oks
+            
                     
                 batch_loss = batch_loss / len(train_loader)
                 running_loss_value = running_loss_value / len(train_loader)
                 offset_loss_value = offset_loss_value / len(train_loader)
                 heatmap_loss_value = heatmap_loss_value / len(train_loader)
-                
+
+
                 if batch_idx % batch_checkpoint == batch_checkpoint-1:
                     step += 1
                     print("--in batch checkpoint--")
                     print("train_loss: ", running_loss_value / batch_checkpoint)
                     print("heatmap_loss: ", heatmap_loss_value / batch_checkpoint)
                     print("offset_loss: ", offset_loss_value / batch_checkpoint)
-                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "heatmap_loss": heatmap_loss_value / batch_checkpoint, "offset_loss": offset_loss_value / batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
+                    print("mAP: ", batch_mAP / batch_checkpoint)
+                    print("oks: ", batch_oks / batch_checkpoint)
+                    wandb.log({"train_loss": running_loss_value / batch_checkpoint , "heatmap_loss": heatmap_loss_value / batch_checkpoint, "offset_loss": offset_loss_value / batch_checkpoint, "mAP": batch_mAP / batch_checkpoint, "oks": batch_oks/batch_checkpoint, "epoch": epoch + ((batch_idx + 1)/len(train_loader))}, step=step)
                     print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss_value / batch_checkpoint))
                     running_loss_value = 0.0
                     heatmap_loss_value = 0.0
                     offset_loss_value = 0.0
                     
-                # calculate accuracy 
-                matched_pairs = match_poses(keypoint_coords, ground_truth_keypoints[item_idx])
-                print("matched_pairs shape: ")
-                print(matched_pairs)
-                
-                image_size = draw_image.shape[1]
-                
-                oks = calculate_oks(matched_pairs, keypoint_coords, ground_truth_keypoints[item_idx], sigmas, variances, image_size)
-                
-                thresholds = np.linspace(0.0, 10.0, num=50)
-                precisions = []
-                recalls = []
-                for i, threshold in enumerate(thresholds):
-                    precision = calculate_precision(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
-                    print("precision: ", precision)
-                    recall = calculate_recall(keypoint_coords, ground_truth_keypoints[item_idx], threshold)
-                    print("recall: ", recall)
-                    precisions.append(precision)
-                    recalls.append(recall)
-                    
-                    # wandb.log({"epoch": epoch, f"precision_{i}": precision, f"recall_{i}": recall})
-                
-                mAP = calculate_mAP(np.array(precisions), np.array(recalls))
-                print("mAP: ", mAP)
-                
-                keys=[f"Threshold {threshold}" for threshold in thresholds]
 
                 print(type(precisions)) # should be <class 'list'>
                 print(type(precisions[0])) # should be <class 'float'>
                 print(type(recalls)) # should be <class 'list'>
                 print(type(recalls[0])) # should be <class 'float'>
                 
-                keys=["Average Precision"]
                 
-                wandb.log({"precision-recall_{filename}" : wandb.plot.line_series(
-                       xs=[recalls], 
-                       ys=[precisions],
-                       keys=keys,
-                       title="precision-recall",
-                       xname="recalls")})
+                
 
                 
                 batch_loss.backward()

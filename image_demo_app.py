@@ -42,6 +42,11 @@ def main():
     model_number = st.sidebar.selectbox('Model', [101, 100, 75, 50])
     scale_factor = 1.0
     output_stride = st.sidebar.selectbox('Output Stride', [8, 16, 32, 64])
+    min_pose_score = st.sidebar.number_input("Minimum Pose Score", min_value=0.000, max_value=1.000, value=0.10, step=0.001)
+    st.sidebar.markdown(f'<p style="color:grey; font-size: 12px">The current number is {min_pose_score:.3f}</p>', unsafe_allow_html=True)
+
+    min_part_score = st.sidebar.number_input("Minimum Part Score", min_value=0.000, max_value=1.000, value=0.010, step=0.001)
+    st.sidebar.markdown(f'<p style="color:grey; font-size:12px">The current number is {min_part_score:.3f}</p>', unsafe_allow_html=True)
 
     model = load_model(model_number)
     output_stride = model.output_stride
@@ -50,8 +55,9 @@ def main():
     output_dir = st.sidebar.text_input('Output Directory', './output')
 
     if option == 'Upload Video':
-
+        video_display_mode = st.sidebar.selectbox("Video Display Mode", ['Frame by Frame', 'Entire Video'])
         uploaded_video = st.sidebar.file_uploader("Upload a video (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
+        
         if uploaded_video is not None:
             tfile = tempfile.NamedTemporaryFile(delete=False) 
             tfile.write(uploaded_video.read())
@@ -64,9 +70,9 @@ def main():
         
             while success:
                 input_image, draw_image, output_scale = process_frame(image, scale_factor, output_stride)
-                result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, draw_image, model, output_stride, output_scale)
+                pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, model, output_stride, output_scale)
 
-                result_image_with_keypoints = print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir)
+                result_image_with_keypoints = print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, min_part_score=min_part_score, min_pose_score=min_pose_score)
 
                 if result_image_with_keypoints is not None and result_image is not None:
                     
@@ -79,7 +85,7 @@ def main():
             if frames:
                 frame_idx = st.slider('Choose a frame', 0, len(frames) - 1, 0)
                 input_image, draw_image, output_scale = process_frame(frames[frame_idx], scale_factor, output_stride)
-                result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, draw_image, model, output_stride, output_scale)
+                pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, model, output_stride, output_scale)
             
                 # Store pose coordinates for each processed frame
                 pose_data = {
@@ -92,7 +98,7 @@ def main():
                 
 
                 if result_image is not None:
-                    st.image(result_image, caption=f'Frame {frame_idx + 1}', use_column_width=True)
+                    st.image(draw_image, caption=f'Frame {frame_idx + 1}', use_column_width=True)
                     st.write(pose_data)
                 else:
                     st.text("Failed to process the frame.")
@@ -112,8 +118,8 @@ def main():
             input_image, source_image, output_scale = process_input(
                 input_image, scale_factor, output_stride)
 
-            result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, source_image, model, output_stride, output_scale)
-            print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=filename)
+            pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, model, output_stride, output_scale)
+            print_frame(source_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=filename, min_part_score=min_part_score, min_pose_score=min_pose_score)
         else:
             st.sidebar.warning("Please upload an image.")
 
@@ -136,7 +142,7 @@ def main():
 
             filename = os.path.basename(selected_image)
             result_image, pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, draw_image, model, output_stride, output_scale)
-            print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=selected_image)
+            print_frame(result_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=selected_image, min_part_score=min_part_score, min_pose_score=min_pose_score)
 
         
     else:
@@ -153,7 +159,7 @@ def process_input(source_img, scale_factor=1.0, output_stride=16):
     input_img = input_img.transpose((2, 0, 1)).reshape(1, 3, target_height, target_width)
     return input_img, source_img, scale
     
-def run_model(input_image, draw_image, model, output_stride, output_scale):
+def run_model(input_image, model, output_stride, output_scale):
 
     with torch.no_grad():
         input_image = torch.Tensor(input_image).cuda()
@@ -177,16 +183,19 @@ def run_model(input_image, draw_image, model, output_stride, output_scale):
 
         keypoint_coords *= output_scale
 
-        draw_image = cv2.cvtColor(draw_image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+          # Convert BGR to RGB
+        
+        return pose_scores, keypoint_scores, keypoint_coords
 
-        return draw_image, pose_scores, keypoint_scores, keypoint_coords
-
-def print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=None):
+def print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, filename=None, min_part_score=0.01, min_pose_score=0.1):
         if output_dir:
+            
             draw_image = posenet.draw_skel_and_kp(
                 draw_image, pose_scores, keypoint_scores, keypoint_coords,
-                min_pose_score=0.25, min_part_score=0.25)
+                min_pose_score=min_pose_score, min_part_score=min_part_score)
         
+            draw_image = cv2.cvtColor(draw_image, cv2.COLOR_BGR2RGB)
+
             if filename:
                 cv2.imwrite(os.path.join(output_dir, filename), draw_image)
             else:
@@ -194,6 +203,7 @@ def print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, outpu
         
             st.image(draw_image, caption='PoseNet Output', use_column_width=True)
             st.text("Results for image: %s" % filename)
+            st.text("Size of draw_image: {}".format(draw_image.shape))
 
             for pi in range(len(pose_scores)):
                 if pose_scores[pi] == 0.:

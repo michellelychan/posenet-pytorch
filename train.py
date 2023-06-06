@@ -322,7 +322,7 @@ def calculate_precision(preds, gts, threshold = 2):
                 print("np.linalg.norm(pred_keypoint - gt_keypoint):  ", np.linalg.norm(pred_keypoint - gt_keypoint))
                 num_false_positives += 1
 
-    precision = num_true_positives / (num_true_positives + num_false_positives) if num_false_positives + num_false_positives == 0 else 0
+    precision = num_true_positives / (num_true_positives + num_false_positives) if num_false_positives + num_false_positives > 0 else 0
     
     
     print("num_false_positives: ", num_false_positives)

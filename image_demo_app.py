@@ -50,61 +50,105 @@ def main():
 
     model = load_model(model_number)
     output_stride = model.output_stride
-
-    option = st.sidebar.selectbox('Choose an option', ['Upload Image', 'Upload Video', 'Try existing image'])
     output_dir = st.sidebar.text_input('Output Directory', './output')
 
+    option = st.selectbox('Choose an option', ['Upload Image', 'Upload Video', 'Try existing image'])
+
     if option == 'Upload Video':
-        video_display_mode = st.sidebar.selectbox("Video Display Mode", ['Frame by Frame', 'Entire Video'])
-        uploaded_video = st.sidebar.file_uploader("Upload a video (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
-        
+        video_display_mode = st.selectbox("Video Display Mode", ['Frame by Frame', 'Entire Video'])
+        uploaded_video = st.file_uploader("Upload a video (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
+    
         if uploaded_video is not None:
             tfile = tempfile.NamedTemporaryFile(delete=False) 
             tfile.write(uploaded_video.read())
-        
+    
             vidcap = cv2.VideoCapture(tfile.name)
             success, image = vidcap.read()
             frames = []
-            frames_with_keypoints = []
             frame_count = 0
-        
+    
             while success:
                 input_image, draw_image, output_scale = process_frame(image, scale_factor, output_stride)
                 pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, model, output_stride, output_scale)
 
-                result_image_with_keypoints = print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, min_part_score=min_part_score, min_pose_score=min_pose_score)
+                result_image = posenet.draw_skel_and_kp(
+                    draw_image, pose_scores, keypoint_scores, keypoint_coords,
+                    min_pose_score=min_pose_score, min_part_score=min_part_score)
+        
+                result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
+                # result_image = print_frame(draw_image, pose_scores, keypoint_scores, keypoint_coords, output_dir, min_part_score=min_part_score, min_pose_score=min_pose_score)
 
-                if result_image_with_keypoints is not None and result_image is not None:
-                    
+                if result_image is not None:
                     frames.append(result_image)
-                    frames_with_keypoints.append(result_image_with_keypoints)
-                    
                     success, image = vidcap.read()
                     frame_count += 1
+
+                    if video_display_mode == 'Frame by Frame':
+                        st.image(result_image, caption=f'Frame {frame_count}', use_column_width=True)
+        
+            # Progress bar
+            progress_bar = st.progress(0)
+
+            # Write the output video
+            output_file = 'output.mp4'
+            height, width, layers = frames[0].shape
+            size = (width,height)
+
+            output_file_path = os.path.join(output_dir, output_file)
+            out = cv2.VideoWriter(output_file_path, cv2.VideoWriter_fourcc(*'mp4v'), 15, size)
+
+            for i in range(len(frames)):
+                progress_percentage = i / len(frames)
+                progress_bar.progress(progress_percentage)
+                out.write(cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR))
+
+            out.release()
+
+
+            # Display the processed video
+            if video_display_mode == 'Entire Video':
+                with open(output_file_path, "rb") as file:
+                    bytes_data = file.read()
+
+                    st.download_button(
+                        label="Download video",
+                        data=bytes_data,
+                        file_name=output_file,
+                        mime="video/mp4",
+                    )
+
+                # video_file = open(output_file_path, 'rb')
+                # st.write(f"Output file path: {output_file_path}")
+                # video_bytes = video_file.read()
+                # st.video(video_bytes)
+
+                # try:
+                #     st.video(bytes_data, format="video/mp4", start_time=0)
+                #     # st.write(f"Output file path: {output_file_path}")
+                #     # st.video('./output/output.mp4', format="video/mp4", start_time=0)
+
+                # except Exception as e:
+                #     st.write("Error: ", str(e))
 
             if frames:
                 frame_idx = st.slider('Choose a frame', 0, len(frames) - 1, 0)
                 input_image, draw_image, output_scale = process_frame(frames[frame_idx], scale_factor, output_stride)
                 pose_scores, keypoint_scores, keypoint_coords = run_model(input_image, model, output_stride, output_scale)
-            
-                # Store pose coordinates for each processed frame
+
                 pose_data = {
                     'pose_scores': pose_scores.tolist(),
                     'keypoint_scores': keypoint_scores.tolist(),
                     'keypoint_coords': keypoint_coords.tolist()
                 }
+            
+                st.image(draw_image, caption=f'Frame {frame_idx + 1}', use_column_width=True)
+                st.write(pose_data)
 
-                # Print pose data
-                
+            progress_bar.progress(1.0)
 
-                if result_image is not None:
-                    st.image(draw_image, caption=f'Frame {frame_idx + 1}', use_column_width=True)
-                    st.write(pose_data)
-                else:
-                    st.text("Failed to process the frame.")
 
     elif option == 'Upload Image':
-        image_file = st.sidebar.file_uploader("Upload Image (Max 10MB)", type=['png', 'jpg', 'jpeg'])
+        image_file = st.file_uploader("Upload Image (Max 10MB)", type=['png', 'jpg', 'jpeg'])
         
         if image_file is not None:
             if image_file.size > MAX_FILE_SIZE:

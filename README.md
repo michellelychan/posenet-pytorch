@@ -1,8 +1,4 @@
-# Github Readme Set up
-
-# Original Readme
-
-## PoseNet Pytorch
+# PoseNet Pytorch
 
 This repository contains a PyTorch implementation (multi-pose only) of the Google TensorFlow.js Posenet model. It is built on top of Ross Wightman’s posenet-pytorch implementation ([https://github.com/rwightman/posenet-pytorch](https://github.com/rwightman/posenet-pytorch)), but it also includes the following, which allows you to create your ground truth data and fine-tune the model from end-to-end : 
 
@@ -65,13 +61,13 @@ The webcam demo uses OpenCV to capture images from a connected webcam. The resul
 
 Generates ground truth heatmaps and offset vectors from keypoints annotated from [Dataloop.ai](http://Dataloop.ai). To create pose estimation annotations, check out: [https://dataloop.ai/docs/create-annotation-point](https://dataloop.ai/docs/create-annotation-point) . Works for both multi and single person. 
 
-### ground_truth.py (Roboflow) (WIP)
+### ground_truth_roboflow.py (Roboflow) (WIP)
 
 Generates ground truth heatmaps from keypoints annotated from Roboflow. Note: Roboflow has not developed an annotation feature for specifically for pose estimation at the moment. It is a simpler interface and works well for single-person pose estimation. 
 
 - Sample Dataset: [https://universe.roboflow.com/michelle-chan/human-body-pose-ground-truth](https://universe.roboflow.com/michelle-chan/human-body-pose-ground-truth)
 
-### [train.py](http://train.py)
+### train.py
 
 Implemented loss functions for multi-person pose estimation based on paper [“Towards Accurate Multi-person Pose Estimation in the Wild”](https://arxiv.org/pdf/1701.01779.pdf). 
 

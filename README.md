@@ -71,7 +71,7 @@ Generates ground truth heatmaps from keypoints annotated from Roboflow. Note: Ro
 
 Implemented loss functions for multi-person pose estimation based on paper [“Towards Accurate Multi-person Pose Estimation in the Wild”](https://arxiv.org/pdf/1701.01779.pdf). 
 
-Training Charts are created with weights and biases (https://wandb.ai/). To start training, create a wandb.ai account and use your API key. 
+Training Charts are created with weights and biases (https://wandb.ai/). To start training, create a wandb.ai account and use your API key. You can also remove the relevant code for wandb.ai logging if you do not want to use weights and biases. 
 
 # Other Tools
 

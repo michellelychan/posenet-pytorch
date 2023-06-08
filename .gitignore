@@ -25,3 +25,4 @@ pred_heatmaps_training_heatmap_loss_only/
 pred_heatmaps_training_offset_loss_only/
 .ipynb_checkpoints/
 .DS_Store
+

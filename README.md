@@ -71,6 +71,8 @@ Generates ground truth heatmaps from keypoints annotated from Roboflow. Note: Ro
 
 Implemented loss functions for multi-person pose estimation based on paper [“Towards Accurate Multi-person Pose Estimation in the Wild”](https://arxiv.org/pdf/1701.01779.pdf). 
 
+Training Charts are created with weights and biases (https://wandb.ai/). To start training, create a wandb.ai account and use your API key. 
+
 # Other Tools
 
 ### visualizers.py
@@ -91,7 +93,7 @@ The Python conversion code was adapted from the CoreML port at [https://github.
 
 # References
 
-Google’s implementation of PoseNet is based on two research papers: 
+Research Papers: 
 
 1. **Towards Accurate Multi-person Pose Estimation in the Wild:** [https://arxiv.org/pdf/1701.01779.pdf](https://arxiv.org/pdf/1701.01779.pdf)
 2. **PersonLab: Person Pose Estimation and Instance Segmentation with a Bottom-Up, Part-Based, Geometric Embedding Model:** 

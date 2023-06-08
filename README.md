@@ -1,60 +1,106 @@
-## PoseNet Pytorch
+# PoseNet Pytorch
 
-This repository contains a PyTorch implementation (multi-pose only) of the Google TensorFlow.js Posenet model.
+This repository contains a PyTorch implementation (multi-pose only) of the Google TensorFlow.js Posenet model (https://github.com/tensorflow/tfjs-models/tree/master/pose-detection). It is built on top of Ross Wightman’s posenet-pytorch implementation ([https://github.com/rwightman/posenet-pytorch](https://github.com/rwightman/posenet-pytorch)), but it also includes the following, which allows you to create your ground truth data and fine-tune the model from end-to-end : 
 
-This port is based on my Tensorflow Python (https://github.com/rwightman/posenet-python) conversion of the same model. An additional step of the algorithm was performed on the GPU in this implementation so it is faster and consumes less CPU (but more GPU). On a GTX 1080 Ti (or better) it can run over 130fps.
+1. **Train File** (for multi-person loss) 
+2. ********************Ground-truth Generation******************** from annotations from Dataloop and Roboflow
+3. **Visualize your heatmaps** from Training 
+4. **Streamlit Demo App** 
+    1. Run the default pre-trained model on images and video. Adjust output stride, pose & keypoint confidence scores to find the optimal parameters for your use case.  
+    2. Run on a trained model (WIP) 
 
-Further optimization is possible as the MobileNet base models have a throughput of 200-300 fps.
+Further optimization is possible as the MobileNet base models have a throughput of 200-300 fps. 
 
-### Install
+# Install
 
-A suitable Python 3.x environment with a recent version of PyTorch is required. Development and testing was done with Python 3.7.1 and PyTorch 1.0 w/ CUDA10 from Conda.
+A suitable Python 3.x environment with a recent version of PyTorch is required. 
 
-If you want to use the webcam demo, a pip version of opencv (`pip install python-opencv=3.4.5.20`) is required instead of the conda version. Anaconda's default opencv does not include ffpmeg/VideoCapture support. The python bindings for OpenCV 4.0 currently have a broken impl of drawKeypoints so please force install a 3.4.x version.
+Development and testing was done with Python 3.9.6 and PyTorch 1.12.1 w/ CUDA 11.6. 
 
-A fresh conda Python 3.6/3.7 environment with the following installs should suffice: 
-```
-conda install -c pytorch pytorch cudatoolkit
-pip install requests opencv-python==3.4.5.20
-```
+A fresh conda Python 3.9 environment with the following installs should suffice:
 
-### Usage
+`conda install -c pytorch pytorch cudatoolkit
+pip install requests opencv-python==4.6.0`
 
-There are three demo apps in the root that utilize the PoseNet model. They are very basic and could definitely be improved.
+# Demo
+
+There are 4 demo apps in the root that utilize the PoseNet model. They are very basic and could definitely be improved.
 
 The first time these apps are run (or the library is used) model weights will be downloaded from the TensorFlow.js version and converted on the fly.
 
-For all demos, the model can be specified with the '--model` argument by using its integer depth multiplier (50, 75, 100, 101). The default is the 101 model.
+For all demos, the model can be specified with the '--model` argument by using its integer depth multiplier (50, 75, 100, 101). The default is the 101 model. 
 
-#### image_demo.py 
+### 1. streamlit_demo.py
+
+Streamlit app interface that allows you to upload an image or video to see the keypoints generated. You can: 
+
+1. Run the default pre-trained model on images and video. Adjust output stride, pose & keypoint confidence scores to find the optimal parameters for your use case.  
+2. Run on a trained model (WIP)
+
+`streamlit run streamlit_demo.py`
+
+### 2. image_demo.py
 
 Image demo runs inference on an input folder of images and outputs those images with the keypoints and skeleton overlayed.
 
 `python image_demo.py --model 101 --image_dir ./images --output_dir ./output`
 
-A folder of suitable test images can be downloaded by first running the `get_test_images.py` script.
+A folder of suitable test images can be downloaded by first running the `get_test_images.py` script.
 
-#### benchmark.py
+### 3. benchmark.py
 
-A minimal performance benchmark based on image_demo. Images in `--image_dir` are pre-loaded and inference is run `--num_images` times with no drawing and no text output.
+A minimal performance benchmark based on image_demo. Images in `--image_dir` are pre-loaded and inference is run `--num_images` times with no drawing and no text output.
 
-#### webcam_demo.py
+### 4. webcam_demo.py
 
 The webcam demo uses OpenCV to capture images from a connected webcam. The result is overlayed with the keypoints and skeletons and rendered to the screen. The default args for the webcam_demo assume device_id=0 for the camera and that 1280x720 resolution is possible.
 
-### Credits
+# Training the Model
 
-The original model, weights, code, etc. was created by Google and can be found at https://github.com/tensorflow/tfjs-models/tree/master/posenet
+### ground_truth_dataloop.py (Dataloop.ai)
 
-This port and my work is in no way related to Google.
+Generates ground truth heatmaps and offset vectors from keypoints annotated from [Dataloop.ai](http://Dataloop.ai). To create pose estimation annotations, check out: [https://dataloop.ai/docs/create-annotation-point](https://dataloop.ai/docs/create-annotation-point) . Works for both multi and single person. 
 
-The Python conversion code that started me on my way was adapted from the CoreML port at https://github.com/infocom-tpo/PoseNet-CoreML
+### ground_truth_roboflow.py (Roboflow) (WIP)
 
-### TODO (someday, maybe)
-* More stringent verification of correctness against the original implementation
-* Performance improvements (especially edge loops in 'decode.py')
-* OpenGL rendering/drawing
-* Comment interfaces, tensor dimensions, etc
-* Implement batch inference for image_demo
-* Create a training routine and add models with more advanced CNN backbones
+Generates ground truth heatmaps from keypoints annotated from Roboflow. Note: Roboflow has not developed an annotation feature for specifically for pose estimation at the moment. It is a simpler interface and works well for single-person pose estimation. 
 
+- Sample Dataset: [https://universe.roboflow.com/michelle-chan/human-body-pose-ground-truth](https://universe.roboflow.com/michelle-chan/human-body-pose-ground-truth)
+
+### train.py
+
+Implemented loss functions for multi-person pose estimation based on paper [“Towards Accurate Multi-person Pose Estimation in the Wild”](https://arxiv.org/pdf/1701.01779.pdf). 
+
+# Other Tools
+
+### visualizers.py
+
+Generates Heatmaps for visualization and saves them to an image file. 
+
+# Credits
+
+This work is not related to Google. 
+
+The repo is based off of Ross Wightman’s posenet-pytorch: [https://github.com/rwightman/posenet-python](https://github.com/rwightman/posenet-python) 
+
+The original model, weights, code, etc. was created by Google and can be found at [https://github.com/tensorflow/tfjs-models/tree/master/posenet](https://github.com/tensorflow/tfjs-models/tree/master/posenet) 
+
+They have a newer pose-detection package here: [https://github.com/tensorflow/tfjs-models/tree/master/pose-detection](https://github.com/tensorflow/tfjs-models/tree/master/pose-detection)
+
+The Python conversion code was adapted from the CoreML port at [https://github.com/infocom-tpo/PoseNet-CoreML](https://github.com/infocom-tpo/PoseNet-CoreML) 
+
+# References
+
+Google’s implementation of PoseNet is based on two research papers: 
+
+1. **Towards Accurate Multi-person Pose Estimation in the Wild:** [https://arxiv.org/pdf/1701.01779.pdf](https://arxiv.org/pdf/1701.01779.pdf)
+2. **PersonLab: Person Pose Estimation and Instance Segmentation with a Bottom-Up, Part-Based, Geometric Embedding Model:** 
+    
+    [https://arxiv.org/pdf/1803.08225.pdf](https://arxiv.org/pdf/1803.08225.pdf) 
+    
+
+Articles: 
+
+- ****Real-time Human Pose Estimation in the Browser with TensorFlow.js:****
+    
+    [https://medium.com/tensorflow/real-time-human-pose-estimation-in-the-browser-with-tensorflow-js-7dd0bc881cd5](https://medium.com/tensorflow/real-time-human-pose-estimation-in-the-browser-with-tensorflow-js-7dd0bc881cd5)

@@ -1,6 +1,6 @@
 # PoseNet Pytorch
 
-This repository contains a PyTorch implementation (multi-pose only) of the Google TensorFlow.js Posenet model (https://github.com/tensorflow/tfjs-models/tree/master/pose-detection). It is built on top of Ross Wightman’s posenet-pytorch implementation ([https://github.com/rwightman/posenet-pytorch](https://github.com/rwightman/posenet-pytorch)), but it also includes the following, which allows you to create your ground truth data and fine-tune the model from end-to-end : 
+This repository contains a PyTorch implementation (multi-pose only) of the Google TensorFlow.js Posenet model (https://github.com/tensorflow/tfjs-models/tree/master/pose-detection). It is built on top of Ross Wightman’s posenet-pytorch implementation ([https://github.com/rwightman/posenet-pytorch](https://github.com/rwightman/posenet-pytorch)), but it also includes the following, which allows you to create your ground truth data and train/fine-tune the model from end-to-end : 
 
 1. **Train File** (for multi-person PoseNet model) 
 2. ********************Ground-truth Generation******************** from annotations from Dataloop and Roboflow

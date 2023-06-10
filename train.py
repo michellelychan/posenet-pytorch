@@ -251,9 +251,6 @@ def calculate_oks(matched_pairs, preds, gts, sigmas, variances, image_size):
     preds_cpu = preds_cpu.astype(np.float64)
     gts_cpu = gts_cpu.astype(np.float64)
     
-    # Normalize keypoints
-    preds_cpu /= image_size
-    gts_cpu /= image_size
     
     for i, j in matched_pairs:
         print("sigmas: ", sigmas)
